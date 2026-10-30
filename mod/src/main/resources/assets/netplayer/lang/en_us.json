@@ -127,5 +127,15 @@
   "netplayer.settings.tooltip": "Signaling server and STUN settings",
   "netplayer.settings.address": "Signaling server address",
   "netplayer.settings.address_hint": "host:port or wss://your-worker.workers.dev/",
-  "netplayer.settings.address_note": "Plain host uses TCP; ws:// or wss:// switches to WebSocket."
+  "netplayer.settings.address_note": "Plain host uses TCP; ws:// or wss:// switches to WebSocket.",
+  "netplayer.error.already_inside": "You are already inside this world",
+  "netplayer.detail.already_inside": "You are already inside this world",
+  "netplayer.detail.inside": "You are playing in this world",
+  "netplayer.settings.test": "Test connection",
+  "netplayer.settings.test_tip": "Connects once without logging in, to check address and TLS",
+  "netplayer.settings.probing": "Testing...",
+  "netplayer.settings.probe_ok": "Endpoint reachable",
+  "netplayer.settings.probe_failed": "Endpoint not reachable",
+  "netplayer.settings.proxy": "HTTP proxy (optional, for workers.dev / Mojang)",
+  "netplayer.settings.proxy_hint": "proxy host, empty for none"
 }

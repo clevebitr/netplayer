@@ -127,5 +127,15 @@
   "netplayer.settings.tooltip": "信令服务器与 STUN 设置",
   "netplayer.settings.address": "信令服务器地址",
   "netplayer.settings.address_hint": "host:port 或 wss://你的worker.workers.dev/",
-  "netplayer.settings.address_note": "纯 host 走 TCP；写 ws:// 或 wss:// 则改用 WebSocket。"
+  "netplayer.settings.address_note": "纯 host 走 TCP；写 ws:// 或 wss:// 则改用 WebSocket。",
+  "netplayer.error.already_inside": "你已经在这个世界里了",
+  "netplayer.detail.already_inside": "你已经在这个世界里了",
+  "netplayer.detail.inside": "你正在这个世界里游玩",
+  "netplayer.settings.test": "测试连接",
+  "netplayer.settings.test_tip": "只连接一次不登录，用来检查地址和 TLS",
+  "netplayer.settings.probing": "测试中…",
+  "netplayer.settings.probe_ok": "可以连上",
+  "netplayer.settings.probe_failed": "连不上",
+  "netplayer.settings.proxy": "HTTP 代理（可选，用于 workers.dev / 正版验证）",
+  "netplayer.settings.proxy_hint": "代理地址，留空表示不用"
 }

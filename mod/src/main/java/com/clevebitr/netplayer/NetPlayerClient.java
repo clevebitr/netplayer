@@ -76,6 +76,12 @@ public final class NetPlayerClient {
     private final Map<String, IceState> icePeers = new ConcurrentHashMap<>();
     private final Map<String, Msg> earlyIce = new ConcurrentHashMap<>();
 
+    private volatile String joinedHostId = "";
+    private volatile long connectingSince;
+    private volatile long lastConfigCheck;
+    private volatile long configStamp;
+    private volatile String lastConnectError = "";
+    private volatile String probeResult = "";
     private volatile boolean restoreAuth = true;
     private volatile IceState directPending;
     private volatile String lastDirectOffer = "";
@@ -118,11 +124,51 @@ public final class NetPlayerClient {
             identity = identity.renamed(name, identityFile);
         }
         loadFriends();
+        configStamp = stamp(configFile);
+        PremiumAuth.setProxy(config.proxyHost, config.proxyPort);
+        LOG.info("config: signaling={} stun=[{}] premiumCheck={} proxy={}", config.signalingTarget(),
+                String.join(", ", config.stunServers), config.verifyPremium,
+                config.proxyHost.isBlank() ? "-" : config.proxyHost + ":" + config.proxyPort);
+    }
+
+    private static long stamp(java.nio.file.Path file) {
+        try {
+            return Files.isRegularFile(file) ? Files.getLastModifiedTime(file).toMillis() : 0L;
+        } catch (Exception e) {
+            return 0L;
+        }
+    }
+
+    /** Reloads config.json when it was edited outside the game. */
+    private void watchConfig(long now) {
+        if (now - lastConfigCheck < 5000L) {
+            return;
+        }
+        lastConfigCheck = now;
+        long current = stamp(configFile);
+        if (current == 0L || current == configStamp) {
+            return;
+        }
+        configStamp = current;
+        config = com.clevebitr.netplayer.Config.load(configFile);
+        PremiumAuth.setProxy(config.proxyHost, config.proxyPort);
+        LOG.info("config reloaded: signaling={} stun=[{}] premiumCheck={} proxy={}", config.signalingTarget(),
+                String.join(", ", config.stunServers), config.verifyPremium,
+                config.proxyHost.isBlank() ? "-" : config.proxyHost + ":" + config.proxyPort);
+        SignalClient old = signal;
+        signal = null;
+        helloDone = false;
+        sentPresence = "";
+        lastConnectAttempt = 0L;
+        if (old != null) {
+            old.close();
+        }
     }
 
     public void tick() {
         init();
         long now = System.currentTimeMillis();
+        watchConfig(now);
         if (!connected() && now - lastConnectAttempt > 8000L) {
             lastConnectAttempt = now;
             Thread.ofVirtual().name("netplayer-signal-connect").start(this::connect);
@@ -133,12 +179,34 @@ public final class NetPlayerClient {
         }
         updatePresence();
         if (hosting != null && mc.getSingleplayerServer() == null) {
-            closeWorld(false);
+            LOG.info("world closed by the host, telling friends");
+            closeWorld(true);
+        }
+        if (mc.level != null) {
+            connectingSince = 0L;
+        } else if (connectingSince != 0L && now - connectingSince > 60_000L) {
+            LOG.info("join attempt timed out");
+            connectingSince = 0L;
+            joinedHostId = "";
+        }
+        boolean connecting = connectingSince != 0L;
+        if (mc.level == null && joinFlow == null && !connecting && (!tunnels.isEmpty() || !icePeers.isEmpty())) {
+            LOG.info("left the world, closing {} tunnel(s)", tunnels.size());
+            for (Tunnel tunnel : tunnels.values()) {
+                tunnel.close();
+            }
+            tunnels.clear();
+            for (IceState state : icePeers.values()) {
+                state.close();
+            }
+            icePeers.clear();
+            joinedHostId = "";
         }
         progressJoin();
     }
 
     private void connect() {
+        final SignalClient[] self = new SignalClient[1];
         SignalClient client = new SignalClient(new SignalClient.Listener() {
             @Override
             public void onMessage(Msg msg) {
@@ -147,27 +215,51 @@ public final class NetPlayerClient {
 
             @Override
             public void onClosed(String reason) {
+                // A stale client (replaced socket, previous attempt) must not clear the live session.
+                if (self[0] != null && self[0] != signal) {
+                    return;
+                }
                 helloDone = false;
                 sentPresence = "";
+                LOG.info("signaling link lost: {}", reason);
             }
         });
+        self[0] = client;
+        String target = config.signalingTarget();
         if (!connect(client)) {
+            if (!client.lastError().equals(lastConnectError)) {
+                lastConnectError = client.lastError();
+                String hint = target.startsWith("ws") && config.proxyHost.isBlank()
+                        ? " (if the endpoint needs a proxy, set one in NetPlayer settings)" : "";
+                LOG.warn("signaling connect to {} failed: {}{}", target, lastConnectError, hint);
+            }
+            client.close();
             return;
         }
+        lastConnectError = "";
+        SignalClient previous = signal;
         signal = client;
+        if (previous != null) {
+            previous.close();
+        }
         long ts = System.currentTimeMillis();
         String payload = "hello:" + identity.profile.id + ":" + ts;
         signal.send(Msg.of("hello")
                 .put("profile", identity.profile.toJson())
                 .put("ts", ts)
                 .put("sig", Bytes.b64(identity.sign(payload.getBytes(StandardCharsets.UTF_8)))));
-        LOG.info("connected to signaling server {}", config.signalingTarget());
+        LOG.info("connected to signaling server {}", target);
     }
 
     private boolean connect(SignalClient client) {
         String url = config.signalingUrl;
+        if ((url == null || url.isBlank()) && config.signalingHost != null
+                && config.signalingHost.contains("://")) {
+            // tolerate a url dropped into signalingHost by hand
+            url = config.signalingHost;
+        }
         if (url != null && !url.isBlank()) {
-            return client.connectUrl(url.trim(), 5000);
+            return client.connectUrl(url.trim(), 12000, config.proxyHost, config.proxyPort);
         }
         return client.connect(config.signalingHost, config.signalingPort, 5000);
     }
@@ -561,10 +653,19 @@ public final class NetPlayerClient {
     // ------------------------------------------------------------------ joining
 
     public boolean canJoin(String friendId) {
-        return presence(friendId).openTo(me().id);
+        return presence(friendId).openTo(me().id) && !insideWorldOf(friendId);
+    }
+
+    /** True while we already play inside that friend's world. */
+    public boolean insideWorldOf(String friendId) {
+        return friendId != null && !friendId.isEmpty() && friendId.equals(joinedHostId);
     }
 
     public void requestJoin(String friendId) {
+        if (insideWorldOf(friendId)) {
+            notify("netplayer.error.already_inside");
+            return;
+        }
         Presence presence = presence(friendId);
         if (!presence.openTo(me().id)) {
             notify("netplayer.error.not_open");
@@ -654,12 +755,16 @@ public final class NetPlayerClient {
         storeFriend(host);
         JoinFlow flow = new JoinFlow(host, msg.str("room"), msg.str("world"));
         joinFlow = flow;
+        joinedHostId = host.id;
+        connectingSince = System.currentTimeMillis();
         Toasts.info(Component.literal(host.shortName()), Component.translatable("netplayer.toast.join_accepted"));
         startIce(host, flow.roomId, true, 0);
     }
 
     private void failJoin(String messageKey) {
         joinFlow = null;
+        joinedHostId = "";
+        connectingSince = 0L;
         Toasts.info(Component.translatable("netplayer.title"), Component.translatable(messageKey));
     }
 
@@ -907,6 +1012,8 @@ public final class NetPlayerClient {
         storeFriend(host);
         JoinFlow flow = new JoinFlow(host, roomId, Json.str(payload, "world"));
         joinFlow = flow;
+        joinedHostId = host.id;
+        connectingSince = System.currentTimeMillis();
         IceState previous = icePeers.remove(host.id);
         if (previous != null) {
             previous.close();
@@ -1033,6 +1140,33 @@ public final class NetPlayerClient {
         return config.signalingPort;
     }
 
+    public String probeResult() {
+        return probeResult;
+    }
+
+    /** Connects (without announcing) to verify the endpoint, used by the settings screen. */
+    public void probeSignaling() {
+        init();
+        probeResult = "netplayer.settings.probing";
+        Thread.ofVirtual().name("netplayer-probe").start(() -> {
+            SignalClient probe = new SignalClient(new SignalClient.Listener() {
+                @Override
+                public void onMessage(Msg msg) {
+                }
+
+                @Override
+                public void onClosed(String reason) {
+                }
+            });
+            if (connect(probe)) {
+                probeResult = "netplayer.settings.probe_ok";
+            } else {
+                probeResult = probe.lastError().isEmpty() ? "netplayer.settings.probe_failed" : probe.lastError();
+            }
+            probe.close();
+        });
+    }
+
     public String stunServersText() {
         init();
         return String.join(", ", config.stunServers);
@@ -1045,7 +1179,21 @@ public final class NetPlayerClient {
     }
 
     /** Accepts either {@code host}, {@code host:port} or a {@code ws(s)://} / plain url. */
+    public String proxyHost() {
+        init();
+        return config.proxyHost;
+    }
+
+    public int proxyPort() {
+        init();
+        return config.proxyPort;
+    }
+
     public void applySettings(String host, int port, String stunCsv) {
+        applySettings(host, port, stunCsv, config.proxyHost, config.proxyPort);
+    }
+
+    public void applySettings(String host, int port, String stunCsv, String proxy, int proxyPort) {
         init();
         String raw = host == null ? "" : host.strip();
         if (raw.contains("://")) {
@@ -1064,7 +1212,13 @@ public final class NetPlayerClient {
         if (!servers.isEmpty()) {
             config.stunServers = servers;
         }
+        config.proxyHost = proxy == null ? "" : proxy.strip();
+        config.proxyPort = proxyPort;
+        PremiumAuth.setProxy(config.proxyHost, config.proxyPort);
         config.save(configFile);
+        configStamp = stamp(configFile);
+        LOG.info("settings applied: signaling={} stun=[{}]", config.signalingTarget(),
+                String.join(", ", config.stunServers));
         SignalClient old = signal;
         signal = null;
         helloDone = false;

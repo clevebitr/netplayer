@@ -52,15 +52,22 @@ public final class ClientEvents {
     private static void onScreenInit(ScreenEvent.Init.Post event) {
         Screen screen = event.getScreen();
         if (screen instanceof TitleScreen) {
-            Button anchor = findButton(screen, Component.translatable("menu.multiplayer"));
-            insertBelow(event, screen, anchor, List.of(friendsButton(screen)), 200);
-        } else if (screen instanceof PauseScreen) {
-            Button anchor = findButton(screen, Component.translatable("menu.playerReporting"));
-            if (anchor == null) {
-                anchor = findButton(screen, Component.translatable("menu.shareToLan"));
+            Button multiplayer = findButton(screen, Component.translatable("menu.multiplayer"));
+            if (multiplayer != null) {
+                insertRow(event, screen, multiplayer.getY(), multiplayer.getX(), multiplayer.getWidth(),
+                        List.of(friendsButton(screen)), 1);
             }
-            if (anchor == null) {
-                anchor = findButton(screen, Component.translatable("menu.options"));
+        } else if (screen instanceof PauseScreen) {
+            Button left = findButton(screen, Component.translatable("menu.options"));
+            Button right = findButton(screen, Component.translatable("menu.playerReporting"));
+            if (right == null) {
+                right = findButton(screen, Component.translatable("menu.shareToLan"));
+            }
+            if (left == null) {
+                left = right;
+            }
+            if (left == null) {
+                return;
             }
             List<Button> buttons = new ArrayList<>();
             buttons.add(friendsButton(screen));
@@ -68,7 +75,11 @@ public final class ClientEvents {
             if (Minecraft.getInstance().hasSingleplayerServer()) {
                 buttons.add(openWorldButton(screen));
             }
-            insertBelow(event, screen, anchor, buttons, 204);
+            // Align with the full width rows (return to game / mods) so the row lines up with vanilla.
+            Button full = findButton(screen, Component.translatable("menu.returnToGame"));
+            int rowLeft = full != null ? full.getX() : left.getX();
+            int rowWidth = full != null ? full.getWidth() : left.getWidth() * 2 + 8;
+            insertRow(event, screen, left.getY(), rowLeft, rowWidth, buttons, 2);
         }
     }
 
@@ -86,40 +97,33 @@ public final class ClientEvents {
                 .build();
     }
 
-    /** Adds the buttons as a new vertical row right below {@code anchor}, pushing later rows down. */
-    private static void insertBelow(ScreenEvent.Init.Post event, Screen screen, Button anchor, List<Button> buttons,
-                                    int rowWidth) {
+    /**
+     * Inserts one extra row right below {@code rowTop}, in the same column layout as vanilla
+     * ({@code columns} cells), and pushes the rows below it down so nothing overlaps.
+     */
+    private static void insertRow(ScreenEvent.Init.Post event, Screen screen, int rowTop, int rowLeft,
+                                  int rowWidth, List<Button> buttons, int columns) {
         if (buttons.isEmpty()) {
             return;
         }
-        if (anchor == null) {
-            int x = 4;
-            int y = screen.height - 26 - (buttons.size() - 1) * ROW;
-            for (int i = 0; i < buttons.size(); i++) {
-                Button button = buttons.get(i);
-                button.setX(x);
-                button.setY(y + i * ROW);
-                button.setWidth(98);
-                button.setHeight(20);
-                event.addListener(button);
-            }
-            return;
-        }
-        int top = anchor.getY() + ROW;
-        int shift = ROW * buttons.size();
+        int top = rowTop + ROW;
         int bottomLimit = screen.height - 40;
         for (GuiEventListener listener : new ArrayList<>(screen.children())) {
-            if (listener instanceof AbstractWidget widget && widget != anchor
+            if (listener instanceof AbstractWidget widget
                     && widget.getY() >= top && widget.getY() <= bottomLimit) {
-                widget.setY(widget.getY() + shift);
+                widget.setY(widget.getY() + ROW);
             }
         }
+        // Vanilla GridLayout cells are 4px padded on both sides: a 98 wide button sits in a 106 cell,
+        // and a full width row of 204 spans 212. Match that exactly so the columns line up.
+        int cell = columns <= 1 ? rowWidth : (rowWidth + 8) / columns;
+        boolean fullWidth = columns <= 1 || buttons.size() == 1;
         for (int i = 0; i < buttons.size(); i++) {
             Button button = buttons.get(i);
-            button.setX(anchor.getX());
-            button.setY(top + i * ROW);
-            button.setWidth(rowWidth);
-            button.setHeight(anchor.getHeight());
+            button.setX(fullWidth ? rowLeft : rowLeft + i * cell);
+            button.setY(top);
+            button.setWidth(fullWidth ? rowWidth : Math.max(40, cell - 8));
+            button.setHeight(20);
             event.addListener(button);
         }
     }

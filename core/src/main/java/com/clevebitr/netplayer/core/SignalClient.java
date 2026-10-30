@@ -5,6 +5,7 @@ import java.io.BufferedWriter;
 import java.io.InputStreamReader;
 import java.io.OutputStreamWriter;
 import java.net.InetSocketAddress;
+import java.net.ProxySelector;
 import java.net.Socket;
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -54,6 +55,7 @@ public final class SignalClient implements AutoCloseable {
     private Thread sender;
 
     private volatile boolean closed;
+    private volatile String lastError = "";
 
     public SignalClient(Listener listener) {
         this.listener = listener;
@@ -71,8 +73,10 @@ public final class SignalClient implements AutoCloseable {
             out = new BufferedWriter(new OutputStreamWriter(s.getOutputStream(), StandardCharsets.UTF_8));
             closed = false;
             reader = Thread.ofVirtual().name("netplayer-signal").start(this::readLoop);
+            lastError = "";
             return true;
         } catch (Exception e) {
+            lastError = describe(e);
             closeQuietly();
             return false;
         }
@@ -82,11 +86,19 @@ public final class SignalClient implements AutoCloseable {
      * @param url {@code ws://host:port/} or {@code wss://host/}; the path is irrelevant to the server
      */
     public synchronized boolean connectUrl(String url, int timeoutMs) {
+        return connectUrl(url, timeoutMs, "", 0);
+    }
+
+    /** @param proxyHost http proxy for the upgrade request, empty to connect directly */
+    public synchronized boolean connectUrl(String url, int timeoutMs, String proxyHost, int proxyPort) {
         closeQuietly();
         try {
-            HttpClient http = HttpClient.newBuilder()
-                    .connectTimeout(Duration.ofMillis(timeoutMs))
-                    .build();
+            HttpClient.Builder builder = HttpClient.newBuilder()
+                    .connectTimeout(Duration.ofMillis(timeoutMs));
+            if (proxyHost != null && !proxyHost.isBlank() && proxyPort > 0) {
+                builder.proxy(ProxySelector.of(new InetSocketAddress(proxyHost.trim(), proxyPort)));
+            }
+            HttpClient http = builder.build();
             WebSocket socket = http.newWebSocketBuilder()
                     .connectTimeout(Duration.ofMillis(timeoutMs))
                     .buildAsync(URI.create(url), new FrameListener())
@@ -96,11 +108,26 @@ public final class SignalClient implements AutoCloseable {
             outbox = queue;
             closed = false;
             sender = Thread.ofVirtual().name("netplayer-signal-send").start(() -> drain(socket, queue));
+            lastError = "";
             return true;
         } catch (Exception e) {
+            lastError = describe(e);
             closeQuietly();
             return false;
         }
+    }
+
+    public String lastError() {
+        return lastError;
+    }
+
+    private static String describe(Throwable t) {
+        Throwable cause = t;
+        while (cause.getCause() != null && cause.getCause() != cause) {
+            cause = cause.getCause();
+        }
+        String text = cause.toString();
+        return text.length() > 200 ? text.substring(0, 200) : text;
     }
 
     public boolean isConnected() {

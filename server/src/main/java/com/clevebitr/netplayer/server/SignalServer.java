@@ -376,7 +376,7 @@ public final class SignalServer implements AutoCloseable {
     }
 
     private void log(String text) {
-        System.out.println("[netplayer] " + text);
+        System.out.println("[" + java.time.LocalTime.now().withNano(0) + "] [netplayer] " + text);
     }
 
     @Override

@@ -15,10 +15,31 @@ import java.time.Duration;
  */
 public final class PremiumAuth {
     private static final String SESSION = "https://sessionserver.mojang.com/session/minecraft/";
-    private static final HttpClient HTTP = HttpClient.newBuilder()
-            .connectTimeout(Duration.ofSeconds(5))
-            .followRedirects(HttpClient.Redirect.NORMAL)
-            .build();
+    private static volatile String proxyHost = "";
+    private static volatile int proxyPort;
+    private static volatile HttpClient http;
+
+    /** Routes the session server calls through an http proxy when the game needs one. */
+    public static void setProxy(String host, int port) {
+        proxyHost = host == null ? "" : host.trim();
+        proxyPort = port;
+        http = null;
+    }
+
+    private static HttpClient http() {
+        HttpClient client = http;
+        if (client == null) {
+            HttpClient.Builder builder = HttpClient.newBuilder()
+                    .connectTimeout(Duration.ofSeconds(6))
+                    .followRedirects(HttpClient.Redirect.NORMAL);
+            if (!proxyHost.isEmpty() && proxyPort > 0) {
+                builder.proxy(java.net.ProxySelector.of(new java.net.InetSocketAddress(proxyHost, proxyPort)));
+            }
+            client = builder.build();
+            http = client;
+        }
+        return client;
+    }
 
     private PremiumAuth() {
     }
@@ -38,7 +59,7 @@ public final class PremiumAuth {
                     .header("Content-Type", "application/json")
                     .POST(HttpRequest.BodyPublishers.ofString(Json.GSON.toJson(body)))
                     .build();
-            HttpResponse<String> response = HTTP.send(request, HttpResponse.BodyHandlers.ofString());
+            HttpResponse<String> response = http().send(request, HttpResponse.BodyHandlers.ofString());
             return response.statusCode() == 204 || response.statusCode() == 200;
         } catch (Exception e) {
             return false;
@@ -57,7 +78,7 @@ public final class PremiumAuth {
                     .timeout(Duration.ofSeconds(6))
                     .GET()
                     .build();
-            HttpResponse<String> response = HTTP.send(request, HttpResponse.BodyHandlers.ofString());
+            HttpResponse<String> response = http().send(request, HttpResponse.BodyHandlers.ofString());
             if (response.statusCode() != 200 || response.body() == null || response.body().isBlank()) {
                 return null;
             }

@@ -84,6 +84,11 @@ Both the host and the guest need the mod. A dedicated server does **not**.
 `"signalingUrl": "wss://netplayer-signal.example.workers.dev/"`. Leave it empty to use
 `signalingHost` / `signalingPort` (the self hosted TCP server) instead.
 
+`proxyHost` / `proxyPort` (default empty / 7890) route the WebSocket signaling and the Mojang
+session calls through an HTTP proxy. `*.workers.dev` is not reachable from every network
+(mainland China in particular), so either point the mod at a proxy or bind a custom domain to the
+Worker. All of this is editable in game under **Friends → Settings** (with a *Test connection* button).
+
 `verifyPremium` (default `true`) makes the host check the guest against Mojang's session server
 (`session/minecraft/join` + `hasJoined`), the same two calls an online-mode server does, so only
 genuine accounts can join. It can be toggled per world in **Open to Friends**, and it needs access

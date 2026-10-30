@@ -14,6 +14,9 @@ public final class Config {
     public int signalingPort = 25566;
     public List<String> stunServers = new ArrayList<>(
             List.of("stun.miwifi.com:3478", "stun.chat.bilibili.com:3478"));
+    /** Optional http proxy for the signaling / mojang calls, empty disables it. */
+    public String proxyHost = "";
+    public int proxyPort = 7890;
     public boolean iceDebug = false;
     public boolean verifyPremium = true;
 
@@ -29,6 +32,9 @@ public final class Config {
                     }
                     if (config.signalingUrl == null) {
                         config.signalingUrl = "";
+                    }
+                    if (config.proxyHost == null) {
+                        config.proxyHost = "";
                     }
                     return config;
                 }
@@ -52,6 +58,9 @@ public final class Config {
     public String signalingTarget() {
         if (signalingUrl != null && !signalingUrl.isBlank()) {
             return signalingUrl.trim();
+        }
+        if (signalingHost != null && signalingHost.contains("://")) {
+            return signalingHost.trim();
         }
         return signalingHost + ":" + signalingPort;
     }

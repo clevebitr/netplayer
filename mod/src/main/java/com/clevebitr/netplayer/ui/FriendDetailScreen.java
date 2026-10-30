@@ -52,7 +52,11 @@ public final class FriendDetailScreen extends Screen {
                 .bounds(left, 148, 150, 20)
                 .tooltip(Tooltip.create(Component.translatable("netplayer.friends.join_tip")))
                 .build();
-        join.active = client.presence(friendId).openTo(client.me().id);
+        boolean inside = client.insideWorldOf(friendId);
+        join.active = client.presence(friendId).openTo(client.me().id) && !inside;
+        if (inside) {
+            join.setTooltip(Tooltip.create(Component.translatable("netplayer.detail.already_inside")));
+        }
         addRenderableWidget(join);
 
         addRenderableWidget(Button.builder(Component.translatable("netplayer.detail.copy_key"), b -> {
@@ -104,6 +108,9 @@ public final class FriendDetailScreen extends Screen {
     }
 
     private Component presenceText(Presence presence) {
+        if (client.insideWorldOf(friendId)) {
+            return Component.translatable("netplayer.detail.inside");
+        }
         if (!presence.online()) {
             return Component.translatable("netplayer.status.offline");
         }
