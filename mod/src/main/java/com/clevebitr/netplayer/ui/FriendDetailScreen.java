@@ -99,16 +99,7 @@ public final class FriendDetailScreen extends Screen {
 
         graphics.drawString(font, Component.translatable("netplayer.detail.link"), left, 94, 0xFFFFFF55, false);
         graphics.drawString(font, linkText(link), left, 106, link.active() ? 0xFF55FF55 : 0xFF909090, false);
-        if (link.active() && (!link.local().isEmpty() || !link.remote().isEmpty())) {
-            graphics.drawString(font, Component.literal(link.local() + "  ->  " + link.remote()),
-                    left, 118, 0xFF707070, false);
-        }
         graphics.drawString(font, Component.translatable("netplayer.detail.note"), left, 132, 0xFFFFFF55, false);
-
-        boolean up = client.connected();
-        graphics.drawString(font, Component.translatable(up
-                        ? "netplayer.status.signal_connected" : "netplayer.status.signal_offline"),
-                left, height - 42, up ? 0xFF55FF55 : 0xFFFFAA00, false);
     }
 
     private Component presenceText(Presence presence) {

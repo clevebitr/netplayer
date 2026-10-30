@@ -66,7 +66,6 @@ public final class AddFriendScreen extends Screen {
                         b -> minecraft.setScreen(parent))
                 .bounds(left, height - 28, 310, 20).build());
 
-        setStatus("netplayer.add.tip", 0xFF808080);
     }
 
     private void submit() {
@@ -100,9 +99,6 @@ public final class AddFriendScreen extends Screen {
         graphics.drawString(font, status, left, 70, statusColor, false);
         graphics.drawString(font, Component.translatable("netplayer.add.step2"), left, 96, 0xFFFFFF00, false);
         graphics.drawString(font, Component.translatable("netplayer.add.step3"), left, 156, 0xFFFFFF00, false);
-        if (client.lastDirectAnswer().isEmpty()) {
-            graphics.drawString(font, Component.translatable("netplayer.add.reply_empty"), left, 200, 0xFF707070, false);
-        }
     }
 
     @Override

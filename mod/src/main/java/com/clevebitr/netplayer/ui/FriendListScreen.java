@@ -181,7 +181,6 @@ public final class FriendListScreen extends Screen {
         super.render(graphics, mouseX, mouseY, partialTick);
         int left = width / 2 - 155;
         graphics.drawCenteredString(font, title, width / 2, 8, 0xFFFFFFFF);
-        graphics.drawCenteredString(font, Component.translatable("netplayer.friends.hint"), width / 2, 21, 0xFFA0A0A0);
 
         for (int i = 0; i < rowFriendIds.size(); i++) {
             Friend friend = client.friendMap().get(rowFriendIds.get(i));
@@ -194,12 +193,6 @@ public final class FriendListScreen extends Screen {
         graphics.drawString(font, Component.translatable(up
                         ? "netplayer.status.signal_connected" : "netplayer.status.signal_offline"),
                 left, height - 42, up ? 0xFF55FF55 : 0xFFFFAA00, false);
-        graphics.drawString(font, Component.translatable("netplayer.friends.count", client.friends().size()),
-                left, height - 52, 0xFF808080, false);
-        if (!up) {
-            graphics.drawString(font, Component.translatable("netplayer.status.direct_mode"),
-                    left, height - 62, 0xFFFFCC00, false);
-        }
     }
 
     @Override

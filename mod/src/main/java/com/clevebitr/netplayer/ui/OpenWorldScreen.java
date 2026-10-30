@@ -150,9 +150,6 @@ public final class OpenWorldScreen extends Screen {
         if (client.hosting()) {
             graphics.drawCenteredString(font, Component.translatable("netplayer.open.is_open",
                     client.room().world()), width / 2, 36, 0xFF55FF55);
-            graphics.drawString(font, Component.translatable("netplayer.open.direct_line1"), left, 134, 0xFFA0A0A0, false);
-            graphics.drawString(font, Component.translatable("netplayer.open.direct_line2"), left, 146, 0xFFA0A0A0, false);
-            graphics.drawString(font, Component.translatable("netplayer.open.direct_line3"), left, 158, 0xFFA0A0A0, false);
             graphics.drawString(font, Component.translatable(client.room().premium()
                     ? "netplayer.open.premium_on" : "netplayer.open.premium_off"), left, 176, 0xFF80C0FF, false);
         } else if (!note.getString().isEmpty()) {

@@ -126,14 +126,9 @@ public final class SettingsScreen extends Screen {
         graphics.drawString(font, Component.literal(client.signalingAddress()), left + 96, 26, HINT, false);
 
         graphics.drawString(font, Component.translatable("netplayer.settings.address"), left, 38, LABEL, false);
-        graphics.drawString(font, Component.translatable("netplayer.settings.address_note"), left, 70, HINT, false);
-
         graphics.drawString(font, Component.translatable("netplayer.settings.stun_label"), left, 86, LABEL, false);
-        graphics.drawString(font, Component.translatable("netplayer.settings.stun_hint"), left, 118, HINT, false);
-
         graphics.drawString(font, Component.translatable("netplayer.settings.proxy_label"), left, 136, LABEL, false);
-        graphics.drawString(font, Component.translatable("netplayer.settings.proxy_port"), left + 226, 136, HINT, false);
-        graphics.drawString(font, Component.translatable("netplayer.settings.proxy_hint"), left, 168, HINT, false);
+        graphics.drawString(font, Component.translatable("netplayer.settings.proxy_port"), left + 226, 136, LABEL, false);
 
         if (!status.getString().isEmpty()) {
             graphics.drawString(font, status, left, 202, statusColor, false);
@@ -144,7 +139,6 @@ public final class SettingsScreen extends Screen {
             graphics.drawString(font, text, left, 216, probe.equals("netplayer.settings.probe_ok") ? 0xFF55FF55
                     : probe.equals("netplayer.settings.probing") ? 0xFFFFAA00 : 0xFFFF5555, false);
         }
-        graphics.drawString(font, Component.translatable("netplayer.settings.note"), left, height - 42, HINT, false);
     }
 
     @Override
