@@ -13,6 +13,11 @@ neoForge {
         client {
             client()
         }
+        client2 {
+            client()
+            gameDirectory = project.file('run2')
+            programArguments.addAll '--username', 'Friend'
+        }
         server {
             server()
             programArgument '--nogui'

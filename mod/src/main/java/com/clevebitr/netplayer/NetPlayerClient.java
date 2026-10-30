@@ -13,6 +13,7 @@ import com.clevebitr.netplayer.net.Tunnel;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
+import com.mojang.logging.LogUtils;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.screens.ConnectScreen;
 import net.minecraft.client.gui.screens.TitleScreen;
@@ -37,12 +38,14 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
+import org.slf4j.Logger;
 
 /**
  * Client side brain: own identity, friend list, signaling connection, world hosting and the P2P
  * tunnels. All Minecraft touching work is bounced onto the client thread.
  */
 public final class NetPlayerClient {
+    private static final Logger LOG = LogUtils.getLogger();
     private static NetPlayerClient instance;
 
     public static synchronized NetPlayerClient get() {
@@ -98,6 +101,10 @@ public final class NetPlayerClient {
         }
         initialized = true;
         config = com.clevebitr.netplayer.Config.load(configFile);
+        if (config.iceDebug) {
+            java.util.logging.Logger.getLogger("org.ice4j").setLevel(java.util.logging.Level.INFO);
+            java.util.logging.Logger.getLogger("org.jitsi").setLevel(java.util.logging.Level.INFO);
+        }
         String name = mc.getUser() == null ? "player" : mc.getUser().getName();
         identity = Identity.loadOrCreate(identityFile, name);
         if (!name.equals(identity.profile.name) && !name.isBlank()) {
@@ -147,6 +154,7 @@ public final class NetPlayerClient {
                 .put("profile", identity.profile.toJson())
                 .put("ts", ts)
                 .put("sig", Bytes.b64(identity.sign(payload.getBytes(StandardCharsets.UTF_8)))));
+        LOG.info("connected to signaling server {}:{}", config.signalingHost, config.signalingPort);
     }
 
     public boolean connected() {
@@ -356,6 +364,7 @@ public final class NetPlayerClient {
                 if (hosting != null) {
                     sendRoomOpen();
                 }
+                LOG.info("signaling handshake done as {} ({})", me().shortName(), me().id);
             }
             case "presence" -> onPresence(msg);
             case "add" -> {
@@ -369,6 +378,7 @@ public final class NetPlayerClient {
             case "join_req" -> {
                 Profile guest = Profile.fromJson(msg.obj("guest"));
                 pendingJoins.add(new Pending(guest, msg.str("room"), msg.str("world"), System.currentTimeMillis()));
+                LOG.info("join request from {} ({})", guest.shortName(), guest.id);
                 Toasts.info(Component.literal(guest.shortName()),
                         Component.translatable("netplayer.toast.join_request"));
             }
@@ -568,6 +578,7 @@ public final class NetPlayerClient {
                 KeyPair ephemeral = Crypto.xKeyPair();
                 state = new IceState(link, ephemeral, controlling, lanPort);
                 icePeers.put(peer.id, state);
+                LOG.info("ICE start as {} with {} ({})", controlling ? "guest" : "host", peer.shortName(), peer.id);
                 JsonObject description = link.localDescription();
                 String epk = Bytes.b64(ephemeral.getPublic().getEncoded());
                 String signed = "ice:" + roomId + ":" + Json.str(description, "ufrag") + ":"
@@ -614,6 +625,7 @@ public final class NetPlayerClient {
                     iceFailed(state);
                     return;
                 }
+                LOG.info("ICE connected with {} (relayed={})", from.shortName(), state.link.isRelayed());
                 SecretKeySpec key = Crypto.agree(state.ephemeral.getPrivate(), Crypto.xPublic(Json.str(remote, "epk")));
                 if (state.controlling) {
                     Tunnel tunnel = Tunnel.guest(state.link, key);
@@ -635,6 +647,7 @@ public final class NetPlayerClient {
     }
 
     private void iceFailed(IceState state) {
+        LOG.warn("ICE failed, no direct path");
         Toasts.info(Component.translatable("netplayer.title"), Component.translatable("netplayer.error.ice_failed"));
         if (state != null) {
             state.close();

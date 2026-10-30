@@ -12,6 +12,7 @@ public final class Config {
     public int signalingPort = 25566;
     public List<String> stunServers = new ArrayList<>(
             List.of("stun.miwifi.com:3478", "stun.chat.bilibili.com:3478"));
+    public boolean iceDebug = false;
 
     public static Config load(Path file) {
         if (Files.isRegularFile(file)) {

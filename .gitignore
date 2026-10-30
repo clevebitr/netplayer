@@ -7,3 +7,5 @@ run/
 *.iml
 .vscode/
 *.hprof
+run2/
+*/run2/
