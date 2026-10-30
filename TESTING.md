@@ -142,3 +142,22 @@ A 在 **对好友开放** 里点 **复制房间密钥**（`npjoin1....`）发给
 - 直连码是一次性的：再点一次「生成直连码」会让旧的应答码失效（`直连码已过期`）。
 - 好友白名单仍然生效：生成时只选了某个好友，别人粘贴会被拒绝（`房主没有允许你进入`）。
 - 无信令时好友列表显示"离线"，点行不会发申请——这是预期，用上面的直连码流程。
+
+## 8. Workers 信令部署检查单
+
+1. `npx wrangler deploy` 成功，`curl https://<worker>.workers.dev/` 返回
+   `{"ok":true,"service":"netplayer-signal","protocol":1,"transport":"websocket"}`。
+2. **自定义域名必须同时有 DNS 记录**：Route 只匹配"已经到了 Cloudflare 的请求"，
+   不会自动创建记录。做到二者之一：
+   - Workers → 你的 Worker → Settings → **Domains & Routes → Custom Domain** 添加
+     `netplayer.<zone>`（Cloudflare 自动建记录 + 证书），或
+   - DNS → 添加 `A` 记录：Name `netplayer`，Content `192.0.2.1`（占位），**代理开启（橙色云）**，
+     这样已有的 Route `netplayer.<zone>/*` 才会被触发。
+3. 验证 DNS 真的存在（NXDOMAIN = 记录没加）：
+   ```bash
+   curl -s "https://dns.alidns.com/resolve?name=netplayer.clevebitr.dpdns.org&type=A"
+   # Status:0 + Answer 里有 104.x/172.x 才对；Status:3 就是 NXDOMAIN
+   ```
+4. 网络：`*.workers.dev` 在部分网络不可直连，游戏 JVM 也不吃系统代理，
+   所以要在 **好友 → 设置** 里填 HTTP 代理（如 `127.0.0.1:7890`），并点 **测试连接** 验证。
+5. 客户端地址字段写 `wss://netplayer.<zone>/`（或 `wss://<worker>.workers.dev/`）。
