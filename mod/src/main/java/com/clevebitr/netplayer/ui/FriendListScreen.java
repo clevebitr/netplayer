@@ -190,11 +190,15 @@ public final class FriendListScreen extends Screen {
             }
         }
 
+        boolean up = client.connected();
+        graphics.drawString(font, Component.translatable(up
+                        ? "netplayer.status.signal_connected" : "netplayer.status.signal_offline"),
+                left, height - 42, up ? 0x55FF55 : 0xFFAA00, false);
         graphics.drawString(font, Component.translatable("netplayer.friends.count", client.friends().size()),
-                left, height - 40, 0x808080, false);
-        if (!client.connected()) {
-            graphics.drawCenteredString(font, Component.translatable("netplayer.status.direct_mode"),
-                    width / 2, height - 40, 0xFFCC00);
+                left, height - 52, 0x808080, false);
+        if (!up) {
+            graphics.drawString(font, Component.translatable("netplayer.status.direct_mode"),
+                    left, height - 62, 0xFFCC00, false);
         }
     }
 

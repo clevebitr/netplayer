@@ -137,5 +137,10 @@
   "netplayer.settings.probe_ok": "Endpoint reachable",
   "netplayer.settings.probe_failed": "Endpoint not reachable",
   "netplayer.settings.proxy": "HTTP proxy (optional, for workers.dev / Mojang)",
-  "netplayer.settings.proxy_hint": "proxy host, empty for none"
+  "netplayer.settings.proxy_hint": "proxy host, empty for none",
+  "netplayer.settings.stun_label": "STUN servers",
+  "netplayer.settings.proxy_label": "HTTP proxy (optional)",
+  "netplayer.settings.proxy_port": "port",
+  "netplayer.status.signal_connected": "Signaling: connected",
+  "netplayer.status.signal_offline": "Signaling: offline"
 }

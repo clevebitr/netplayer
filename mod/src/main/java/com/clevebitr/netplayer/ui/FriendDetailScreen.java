@@ -37,7 +37,7 @@ public final class FriendDetailScreen extends Screen {
         }
         int left = width / 2 - 155;
 
-        noteBox = new EditBox(font, left, 120, 230, 18, Component.translatable("netplayer.detail.note_hint"));
+        noteBox = new EditBox(font, left, 144, 230, 18, Component.translatable("netplayer.detail.note_hint"));
         noteBox.setMaxLength(48);
         noteBox.setValue(friend.note == null ? "" : friend.note);
         addRenderableWidget(noteBox);
@@ -45,11 +45,11 @@ public final class FriendDetailScreen extends Screen {
         addRenderableWidget(Button.builder(Component.translatable("netplayer.detail.save_note"), b -> {
             client.setNote(friendId, noteBox.getValue());
             noteBox.setValue(client.friendMap().get(friendId).note);
-        }).bounds(left + 234, 120, 76, 18).build());
+        }).bounds(left + 234, 144, 76, 18).build());
 
         Button join = Button.builder(Component.translatable("netplayer.detail.join"),
                         b -> client.requestJoin(friendId))
-                .bounds(left, 148, 150, 20)
+                .bounds(left, 172, 150, 20)
                 .tooltip(Tooltip.create(Component.translatable("netplayer.friends.join_tip")))
                 .build();
         boolean inside = client.insideWorldOf(friendId);
@@ -61,16 +61,16 @@ public final class FriendDetailScreen extends Screen {
 
         addRenderableWidget(Button.builder(Component.translatable("netplayer.detail.copy_key"), b -> {
             minecraft.keyboardHandler.setClipboard(com.clevebitr.netplayer.core.Invite.friendKey(friend.profile));
-        }).bounds(left + 160, 148, 150, 20).build());
+        }).bounds(left + 160, 172, 150, 20).build());
 
         addRenderableWidget(Button.builder(Component.translatable("netplayer.detail.remove"), b -> {
             client.removeFriend(friendId);
             minecraft.setScreen(parent);
-        }).bounds(left, 172, 150, 20).build());
+        }).bounds(left, 196, 150, 20).build());
 
         addRenderableWidget(Button.builder(Component.translatable("netplayer.button.done"),
                         b -> minecraft.setScreen(parent))
-                .bounds(left + 160, 172, 150, 20).build());
+                .bounds(left + 160, 196, 150, 20).build());
     }
 
     @Override
@@ -94,17 +94,21 @@ public final class FriendDetailScreen extends Screen {
         graphics.drawString(font, Component.translatable("netplayer.detail.id", friend.profile.id),
                 left + 38, 54, 0x808080, false);
 
-        graphics.drawString(font, Component.translatable("netplayer.detail.status"), left, 76, 0xFFFF00, false);
-        graphics.drawString(font, presenceText(presence), left + 74, 76, 0xFFFFFF, false);
+        graphics.drawString(font, Component.translatable("netplayer.detail.status"), left, 68, 0xFFFF55, false);
+        graphics.drawString(font, presenceText(presence), left, 80, 0xFFFFFF, false);
 
-        graphics.drawString(font, Component.translatable("netplayer.detail.link"), left, 90, 0xFFFF00, false);
-        graphics.drawString(font, linkText(link), left + 74, 90, link.active() ? 0x55FF55 : 0x808080, false);
-
+        graphics.drawString(font, Component.translatable("netplayer.detail.link"), left, 94, 0xFFFF55, false);
+        graphics.drawString(font, linkText(link), left, 106, link.active() ? 0x55FF55 : 0x909090, false);
         if (link.active() && (!link.local().isEmpty() || !link.remote().isEmpty())) {
             graphics.drawString(font, Component.literal(link.local() + "  ->  " + link.remote()),
-                    left + 74, 102, 0x606060, false);
+                    left, 118, 0x707070, false);
         }
-        graphics.drawString(font, Component.translatable("netplayer.detail.note"), left, 108, 0xFFFF00, false);
+        graphics.drawString(font, Component.translatable("netplayer.detail.note"), left, 132, 0xFFFF55, false);
+
+        boolean up = client.connected();
+        graphics.drawString(font, Component.translatable(up
+                        ? "netplayer.status.signal_connected" : "netplayer.status.signal_offline"),
+                left, height - 42, up ? 0x55FF55 : 0xFFAA00, false);
     }
 
     private Component presenceText(Presence presence) {
