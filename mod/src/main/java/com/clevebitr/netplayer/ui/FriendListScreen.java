@@ -7,6 +7,7 @@ import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.components.AbstractWidget;
 import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.components.EditBox;
+import net.minecraft.client.gui.components.Tooltip;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.network.chat.Component;
 
@@ -34,7 +35,8 @@ public final class FriendListScreen extends Screen {
         client.init();
         int left = width / 2 - 155;
 
-        search = new EditBox(font, left, 48, 310, 18, Component.translatable("netplayer.friends.search"));
+        search = new EditBox(font, left, 32, 200, 18, Component.translatable("netplayer.friends.search"));
+        search.setMaxLength(64);
         search.setValue(filter);
         search.setResponder(value -> {
             filter = value;
@@ -45,10 +47,10 @@ public final class FriendListScreen extends Screen {
 
         addRenderableWidget(Button.builder(Component.translatable("netplayer.button.add_friend"),
                         b -> minecraft.setScreen(new AddFriendScreen(this)))
-                .bounds(left, 24, 150, 20).build());
-        addRenderableWidget(Button.builder(Component.translatable("netplayer.button.done"),
-                        b -> minecraft.setScreen(parent))
-                .bounds(left + 160, height - 28, 150, 20).build());
+                .bounds(left + 204, 32, 106, 18)
+                .tooltip(Tooltip.create(Component.translatable("netplayer.friends.add_tip")))
+                .build());
+
         addRenderableWidget(Button.builder(Component.literal("<"),
                         b -> {
                             page = Math.max(0, page - 1);
@@ -61,6 +63,9 @@ public final class FriendListScreen extends Screen {
                             refreshRows();
                         })
                 .bounds(left + 28, height - 28, 24, 20).build());
+        addRenderableWidget(Button.builder(Component.translatable("netplayer.button.done"),
+                        b -> minecraft.setScreen(parent))
+                .bounds(left + 160, height - 28, 150, 20).build());
 
         refreshRows();
     }
@@ -72,12 +77,11 @@ public final class FriendListScreen extends Screen {
         rows.clear();
 
         int left = width / 2 - 155;
-        int y = 76;
-        int limit = Math.max(1, (height - 76 - 34) / ROW_HEIGHT);
+        int y = 58;
+        int limit = Math.max(1, (height - 58 - 34) / ROW_HEIGHT);
         int used = 0;
 
-        List<NetPlayerClient.Pending> pendingList = client.pendingJoins();
-        for (NetPlayerClient.Pending pending : pendingList) {
+        for (NetPlayerClient.Pending pending : client.pendingJoins()) {
             if (used >= 2 || used >= limit) {
                 break;
             }
@@ -107,30 +111,28 @@ public final class FriendListScreen extends Screen {
             used++;
             Friend friend = visible.get(index);
             Presence presence = client.presence(friend.profile.id);
-            Component label = Component.literal(friend.label() + "  ")
-                    .append(status(friend.profile.id, presence));
+            Component label = Component.literal(friend.label() + "  ").append(status(friend.profile.id, presence));
             Button join = Button.builder(label, b -> client.requestJoin(friend.profile.id))
                     .bounds(left, y, 268, 20).build();
             join.active = presence.openTo(client.me().id);
+            join.setTooltip(Tooltip.create(Component.translatable(presence.openTo(client.me().id)
+                    ? "netplayer.friends.join_tip" : "netplayer.friends.not_open_tip")));
             rows.add(addRow(join));
 
             String id = friend.profile.id;
             rows.add(addRow(Button.builder(Component.literal("\u2715"), b -> {
                 client.removeFriend(id);
                 refreshRows();
-            }).bounds(left + 272, y, 38, 20).build()));
+            }).bounds(left + 272, y, 38, 20)
+                    .tooltip(Tooltip.create(Component.translatable("netplayer.friends.remove_tip")))
+                    .build()));
             y += ROW_HEIGHT;
         }
 
-        if (visible.isEmpty()) {
+        if (visible.isEmpty() && used == 0) {
             rows.add(addRow(Button.builder(Component.translatable("netplayer.friends.empty"),
                             b -> minecraft.setScreen(new AddFriendScreen(this)))
                     .bounds(left, y, 310, 20).build()));
-        }
-
-        int maxPage = Math.max(0, (visible.size() - 1) / PER_PAGE);
-        if (page > maxPage) {
-            page = maxPage;
         }
     }
 
@@ -173,14 +175,17 @@ public final class FriendListScreen extends Screen {
     public void render(GuiGraphics graphics, int mouseX, int mouseY, float partialTick) {
         super.render(graphics, mouseX, mouseY, partialTick);
         graphics.drawCenteredString(font, title, width / 2, 8, 0xFFFFFF);
+        graphics.drawCenteredString(font, Component.translatable("netplayer.friends.hint"), width / 2, 21, 0xA0A0A0);
+        graphics.drawString(font, Component.translatable("netplayer.friends.count", client.friends().size()),
+                width / 2 - 155, height - 40, 0x808080, false);
         if (!client.connected()) {
             graphics.drawCenteredString(font, Component.translatable("netplayer.status.disconnected"),
-                    width / 2, height - 44, 0xFF5555);
+                    width / 2, height - 40, 0xFF5555);
         }
     }
 
     @Override
     public boolean isPauseScreen() {
-        return false;
+        return true;
     }
 }

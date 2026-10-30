@@ -212,6 +212,13 @@ public final class NetPlayerClient {
     }
 
     public String addFriend(String text) {
+        String result = doAddFriend(text);
+        LOG.info("add friend request ({} chars) -> {}", text == null ? 0 : text.strip().length(),
+                result == null ? "ok" : result);
+        return result;
+    }
+
+    private String doAddFriend(String text) {
         init();
         if (text == null || text.isBlank()) {
             return "netplayer.error.empty";
@@ -250,6 +257,7 @@ public final class NetPlayerClient {
             return;
         }
         friends.computeIfAbsent(profile.id, k -> new Friend(profile));
+        LOG.info("friend stored {} ({})", profile.shortName(), profile.id);
         saveFriends();
         watchDirty = true;
     }

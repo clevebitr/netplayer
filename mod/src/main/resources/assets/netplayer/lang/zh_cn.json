@@ -55,5 +55,16 @@
   "netplayer.error.room_closed": "世界已关闭",
   "netplayer.error.ice_failed": "无法直连，请尝试 IPv6 或端口转发",
   "key.netplayer.friends": "打开好友列表",
-  "netplayer.error.offline": "未连接到信令服务器"
+  "netplayer.error.offline": "未连接到信令服务器",
+  "netplayer.friends.hint": "点好友那一行可以申请进入对方开放的世界",
+  "netplayer.friends.add_tip": "粘贴好友的邀请密钥即可添加",
+  "netplayer.friends.join_tip": "向房主申请进入",
+  "netplayer.friends.not_open_tip": "该好友没有对你开放世界",
+  "netplayer.friends.remove_tip": "删除好友",
+  "netplayer.friends.count": "好友数：%s",
+  "netplayer.add.step1": "1. 把好友的邀请密钥粘贴到这里（npfriend1 / npjoin1 开头）",
+  "netplayer.add.step2": "2. 你的邀请密钥：复制后发给好友，让对方粘贴到上面",
+  "netplayer.add.tip": "粘贴密钥后点「添加」，双方会互相出现在好友列表里",
+  "netplayer.title.tooltip": "NetPlayer 好友",
+  "netplayer.open.tooltip": "把你的世界对好友开放"
 }

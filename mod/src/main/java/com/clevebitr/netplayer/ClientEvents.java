@@ -2,9 +2,12 @@ package com.clevebitr.netplayer;
 
 import com.clevebitr.netplayer.ui.FriendListScreen;
 import com.clevebitr.netplayer.ui.OpenWorldScreen;
+import com.mojang.blaze3d.platform.InputConstants;
 import net.minecraft.client.KeyMapping;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.components.Button;
+import net.minecraft.client.gui.components.Tooltip;
+import net.minecraft.client.gui.components.events.GuiEventListener;
 import net.minecraft.client.gui.screens.PauseScreen;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.client.gui.screens.TitleScreen;
@@ -22,7 +25,7 @@ public final class ClientEvents {
             KeyMapping.Category.register(Identifier.fromNamespaceAndPath(NetPlayer.MOD_ID, "main"));
 
     public static final KeyMapping OPEN_FRIENDS = new KeyMapping("key.netplayer.friends",
-            com.mojang.blaze3d.platform.InputConstants.Type.KEYSYM, GLFW.GLFW_KEY_F9, CATEGORY);
+            InputConstants.Type.KEYSYM, GLFW.GLFW_KEY_F9, CATEGORY);
 
     private ClientEvents() {
     }
@@ -43,18 +46,52 @@ public final class ClientEvents {
     private static void onScreenInit(ScreenEvent.Init.Post event) {
         Screen screen = event.getScreen();
         if (screen instanceof TitleScreen) {
+            Button multiplayer = findButton(screen, Component.translatable("menu.multiplayer"));
+            int y = multiplayer != null ? multiplayer.getY() : screen.height / 4 + 56;
+            int x = screen.width / 2 + 102;
+            if (x + 98 > screen.width - 4) {
+                x = 4;
+                y = screen.height - 26;
+            }
             event.addListener(Button.builder(Component.translatable("netplayer.button.friends"),
                             b -> Minecraft.getInstance().setScreen(new FriendListScreen(screen)))
-                    .bounds(6, screen.height - 26, 98, 20).build());
+                    .bounds(x, y, 98, 20)
+                    .tooltip(Tooltip.create(Component.translatable("netplayer.title.tooltip")))
+                    .build());
         } else if (screen instanceof PauseScreen) {
-            int y = screen.height - 26;
+            Button anchor = findButton(screen, Component.translatable("menu.shareToLan"));
+            if (anchor == null) {
+                anchor = findButton(screen, Component.translatable("menu.playerReporting"));
+            }
+            if (anchor == null) {
+                anchor = findButton(screen, Component.translatable("menu.options"));
+            }
+            int y = anchor != null ? anchor.getY() : screen.height / 2;
+            int x = screen.width / 2 + 112;
+            if (x + 98 > screen.width - 4) {
+                x = 4;
+                y = screen.height - 76;
+            }
             event.addListener(Button.builder(Component.translatable("netplayer.button.friends"),
                             b -> Minecraft.getInstance().setScreen(new FriendListScreen(screen)))
-                    .bounds(6, y, 98, 20).build());
+                    .bounds(x, y, 98, 20)
+                    .tooltip(Tooltip.create(Component.translatable("netplayer.title.tooltip")))
+                    .build());
             event.addListener(Button.builder(Component.translatable("netplayer.button.open_world"),
                             b -> Minecraft.getInstance().setScreen(new OpenWorldScreen(screen)))
-                    .bounds(6, y - 24, 98, 20).build());
+                    .bounds(x, y + 24, 98, 20)
+                    .tooltip(Tooltip.create(Component.translatable("netplayer.open.tooltip")))
+                    .build());
         }
+    }
+
+    private static Button findButton(Screen screen, Component message) {
+        for (GuiEventListener listener : screen.children()) {
+            if (listener instanceof Button button && message.equals(button.getMessage())) {
+                return button;
+            }
+        }
+        return null;
     }
 
     private static void onClientTick(ClientTickEvent.Post event) {

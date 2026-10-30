@@ -13,5 +13,5 @@ auto-breakpoint: false
 
 ## Current: M1 — M1 — 骨架/信令/ICE 隧道跑通（详见 #1-#6）
 
-goal: M1 已完成：mod+server 可编译、ICE/UDP 隧道与信令均通过集成测试
-breakpoint: M2 待做：两人真实联机回归 + TURN 中继
+goal: M1 验收中：两客户端已连信令，待人工走联机流程
+breakpoint: 等用户双开回归结果；随后做 TURN/公网信令

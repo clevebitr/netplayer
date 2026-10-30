@@ -55,5 +55,16 @@
   "netplayer.error.room_closed": "The world was closed",
   "netplayer.error.ice_failed": "Could not connect directly. Try IPv6 or port forwarding.",
   "key.netplayer.friends": "Open Friends",
-  "netplayer.error.offline": "Not connected to the signaling server"
+  "netplayer.error.offline": "Not connected to the signaling server",
+  "netplayer.friends.hint": "Click a friend to join the world they opened",
+  "netplayer.friends.add_tip": "Paste a friend's invite key to add them",
+  "netplayer.friends.join_tip": "Ask the host to let you in",
+  "netplayer.friends.not_open_tip": "This friend has not opened a world for you",
+  "netplayer.friends.remove_tip": "Remove friend",
+  "netplayer.friends.count": "Friends: %s",
+  "netplayer.add.step1": "1. Paste your friend's invite key (starts with npfriend1 / npjoin1)",
+  "netplayer.add.step2": "2. Your invite key - send it to a friend, they paste it there",
+  "netplayer.add.tip": "Paste a key above, then press Add. Both sides get each other.",
+  "netplayer.title.tooltip": "NetPlayer friends",
+  "netplayer.open.tooltip": "Open your world to friends"
 }
