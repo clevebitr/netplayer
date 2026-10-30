@@ -34,6 +34,16 @@ public final class Tunnel implements AutoCloseable {
         this.stream = new ReliableStream(this::emit);
     }
 
+    private static final java.net.InetAddress LOOPBACK = ipv4Loopback();
+
+    private static java.net.InetAddress ipv4Loopback() {
+        try {
+            return java.net.InetAddress.getByName("127.0.0.1");
+        } catch (Exception e) {
+            return java.net.InetAddress.getLoopbackAddress();
+        }
+    }
+
     public static Tunnel host(IceLink link, SecretKeySpec key, int lanPort) {
         return new Tunnel(link, key, true, lanPort, null);
     }
@@ -41,7 +51,7 @@ public final class Tunnel implements AutoCloseable {
     public static Tunnel guest(IceLink link, SecretKeySpec key) throws IOException {
         ServerSocket listener = new ServerSocket();
         listener.setReuseAddress(true);
-        listener.bind(new InetSocketAddress(InetAddress.getLoopbackAddress(), 0));
+        listener.bind(new InetSocketAddress(LOOPBACK, 0));
         return new Tunnel(link, key, false, 0, listener);
     }
 
@@ -97,7 +107,7 @@ public final class Tunnel implements AutoCloseable {
         try {
             Socket socket = new Socket();
             socket.setTcpNoDelay(true);
-            socket.connect(new InetSocketAddress(InetAddress.getLoopbackAddress(), lanPort), 5000);
+            socket.connect(new InetSocketAddress(LOOPBACK, lanPort), 5000);
             pump(socket);
         } catch (Exception e) {
             close();

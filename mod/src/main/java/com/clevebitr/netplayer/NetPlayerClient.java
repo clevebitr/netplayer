@@ -74,6 +74,10 @@ public final class NetPlayerClient {
     private final Map<String, IceState> icePeers = new ConcurrentHashMap<>();
     private final Map<String, Msg> earlyIce = new ConcurrentHashMap<>();
 
+    private volatile IceState directPending;
+    private volatile String lastDirectOffer = "";
+    private volatile String lastDirectAnswer = "";
+
     private com.clevebitr.netplayer.Config config;
     private Identity identity;
     private SignalClient signal;
@@ -474,6 +478,11 @@ public final class NetPlayerClient {
             state.close();
         }
         icePeers.clear();
+        IceState pending = directPending;
+        directPending = null;
+        if (pending != null) {
+            pending.close();
+        }
         if (announce && room != null) {
             send(Msg.of("room_close").put("room", room.id()));
         }
@@ -664,6 +673,198 @@ public final class NetPlayerClient {
         if (joinFlow != null) {
             joinFlow = null;
         }
+    }
+
+    // ------------------------------------------------------------------ direct mode (no server)
+
+    /**
+     * Serverless signaling: the host produces a code containing its ICE description and hands it over
+     * through any chat, the guest answers with another code. No rendezvous server involved.
+     */
+    public void generateDirectOffer() {
+        init();
+        if (hosting == null) {
+            openWorld(GameType.SURVIVAL, false, true, Set.of());
+        }
+        Room room = hosting;
+        if (room == null) {
+            Toasts.info(Component.translatable("netplayer.title"), Component.translatable("netplayer.error.no_world"));
+            return;
+        }
+        IceState previous = directPending;
+        if (previous != null) {
+            previous.close();
+        }
+        Thread.ofVirtual().name("netplayer-direct-offer").start(() -> {
+            IceState state = null;
+            try {
+                IceLink link = new IceLink(false, config.stunServers);
+                KeyPair ephemeral = Crypto.xKeyPair();
+                state = new IceState(link, ephemeral, false, room.port());
+                directPending = state;
+                JsonObject ice = link.localDescription();
+                String epk = Bytes.b64(ephemeral.getPublic().getEncoded());
+                JsonObject payload = Json.obj();
+                payload.addProperty("v", 1);
+                payload.addProperty("room", room.id());
+                payload.addProperty("world", room.world());
+                payload.addProperty("token", room.token());
+                payload.addProperty("port", room.port());
+                payload.add("host", me().toJson());
+                JsonArray allow = new JsonArray();
+                room.allow().forEach(allow::add);
+                payload.add("allow", allow);
+                payload.add("ice", ice);
+                payload.addProperty("epk", epk);
+                payload.addProperty("sig", Bytes.b64(identity.sign(directSigned("offer", room.id(), ice, epk)
+                        .getBytes(StandardCharsets.UTF_8))));
+                String code = Invite.directOffer(payload);
+                lastDirectOffer = code;
+                String name = room.world();
+                Minecraft.getInstance().execute(() -> {
+                    mc.keyboardHandler.setClipboard(code);
+                    Toasts.info(Component.literal(name), Component.translatable("netplayer.toast.direct_offer"));
+                });
+            } catch (Exception e) {
+                iceFailed(state);
+            }
+        });
+    }
+
+    public String lastDirectOffer() {
+        return lastDirectOffer;
+    }
+
+    public String lastDirectAnswer() {
+        return lastDirectAnswer;
+    }
+
+    /** Accepts a friend key, a room key or a direct offer/answer code. Returns an error key or null. */
+    public String applyCode(String text) {
+        init();
+        if (text == null || text.isBlank()) {
+            return "netplayer.error.empty";
+        }
+        try {
+            if (Invite.isDirectOffer(text)) {
+                return applyDirectOffer(Invite.parseDirectOffer(text));
+            }
+            lastDirectAnswer = "";
+            if (Invite.isDirectAnswer(text)) {
+                return applyDirectAnswer(Invite.parseDirectAnswer(text));
+            }
+        } catch (Exception e) {
+            return "netplayer.error.bad_key";
+        }
+        return addFriend(text);
+    }
+
+    private String applyDirectOffer(JsonObject payload) {
+        Profile host = Profile.fromJson(Json.sub(payload, "host"));
+        JsonObject ice = Json.sub(payload, "ice");
+        String epk = Json.str(payload, "epk");
+        String roomId = Json.str(payload, "room");
+        if (!Crypto.verify(host, directSigned("offer", roomId, ice, epk), Json.str(payload, "sig"))) {
+            return "netplayer.error.bad_signature";
+        }
+        boolean allowed = false;
+        JsonElement allow = payload.get("allow");
+        if (allow != null && allow.isJsonArray()) {
+            for (JsonElement element : allow.getAsJsonArray()) {
+                if ("*".equals(element.getAsString()) || me().id.equals(element.getAsString())) {
+                    allowed = true;
+                    break;
+                }
+            }
+        }
+        if (!allowed) {
+            return "netplayer.error.not_allowed";
+        }
+        storeFriend(host);
+        JoinFlow flow = new JoinFlow(host, roomId, Json.str(payload, "world"));
+        joinFlow = flow;
+        IceState previous = icePeers.remove(host.id);
+        if (previous != null) {
+            previous.close();
+        }
+        Thread.ofVirtual().name("netplayer-direct-guest").start(() -> {
+            IceState state = null;
+            try {
+                IceLink link = new IceLink(true, config.stunServers);
+                KeyPair ephemeral = Crypto.xKeyPair();
+                state = new IceState(link, ephemeral, true, 0);
+                icePeers.put(host.id, state);
+                JsonObject mine = link.localDescription();
+                String myEpk = Bytes.b64(ephemeral.getPublic().getEncoded());
+                JsonObject answer = Json.obj();
+                answer.addProperty("v", 1);
+                answer.addProperty("room", roomId);
+                answer.add("guest", me().toJson());
+                answer.add("ice", mine);
+                answer.addProperty("epk", myEpk);
+                answer.addProperty("sig", Bytes.b64(identity.sign(directSigned("answer", roomId, mine, myEpk)
+                        .getBytes(StandardCharsets.UTF_8))));
+                String code = Invite.directAnswer(answer);
+                lastDirectAnswer = code;
+                Minecraft.getInstance().execute(() -> {
+                    mc.keyboardHandler.setClipboard(code);
+                    Toasts.info(Component.literal(host.shortName()), Component.translatable("netplayer.toast.direct_answer"));
+                });
+                state.link.acceptRemote(ice);
+                if (!state.link.awaitConnected(120_000L)) {
+                    iceFailed(state);
+                    return;
+                }
+                LOG.info("direct ICE connected with {} (relayed={})", host.shortName(), state.link.isRelayed());
+                SecretKeySpec key = Crypto.agree(state.ephemeral.getPrivate(), Crypto.xPublic(epk));
+                Tunnel tunnel = Tunnel.guest(state.link, key);
+                tunnel.start();
+                tunnels.put("guest-direct", tunnel);
+                flow.port = tunnel.localPort();
+            } catch (Exception e) {
+                iceFailed(state);
+            }
+        });
+        return null;
+    }
+
+    private String applyDirectAnswer(JsonObject payload) {
+        Profile guest = Profile.fromJson(Json.sub(payload, "guest"));
+        JsonObject ice = Json.sub(payload, "ice");
+        String epk = Json.str(payload, "epk");
+        String roomId = Json.str(payload, "room");
+        if (!Crypto.verify(guest, directSigned("answer", roomId, ice, epk), Json.str(payload, "sig"))) {
+            return "netplayer.error.bad_signature";
+        }
+        Room room = hosting;
+        IceState state = directPending;
+        if (room == null || state == null || !room.id().equals(roomId)) {
+            return "netplayer.error.direct_stale";
+        }
+        storeFriend(guest);
+        directPending = null;
+        Thread.ofVirtual().name("netplayer-direct-host").start(() -> {
+            try {
+                state.link.acceptRemote(ice);
+                if (!state.link.awaitConnected(30_000L)) {
+                    iceFailed(state);
+                    return;
+                }
+                LOG.info("direct ICE connected with {} (relayed={})", guest.shortName(), state.link.isRelayed());
+                SecretKeySpec key = Crypto.agree(state.ephemeral.getPrivate(), Crypto.xPublic(epk));
+                Tunnel tunnel = Tunnel.host(state.link, key, room.port());
+                tunnel.start();
+                tunnels.put(guest.id, tunnel);
+            } catch (Exception e) {
+                iceFailed(state);
+            }
+        });
+        return null;
+    }
+
+    private static String directSigned(String kind, String roomId, JsonObject ice, String epk) {
+        return "direct-" + kind + ":" + roomId + ":" + Json.str(ice, "ufrag") + ":" + Json.str(ice, "pwd")
+                + ":" + epk;
     }
 
     // ------------------------------------------------------------------ helpers

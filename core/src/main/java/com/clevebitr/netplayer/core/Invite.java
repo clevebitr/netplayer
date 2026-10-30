@@ -11,6 +11,8 @@ import java.nio.charset.StandardCharsets;
 public final class Invite {
     private static final String FRIEND_PREFIX = "npfriend1.";
     private static final String ROOM_PREFIX = "npjoin1.";
+    private static final String OFFER_PREFIX = "npair1.";
+    private static final String ANSWER_PREFIX = "npans1.";
 
     private Invite() {
     }
@@ -63,7 +65,33 @@ public final class Invite {
             return false;
         }
         String t = text.strip();
-        return t.startsWith(FRIEND_PREFIX) || t.startsWith(ROOM_PREFIX);
+        return t.startsWith(FRIEND_PREFIX) || t.startsWith(ROOM_PREFIX)
+                || t.startsWith(OFFER_PREFIX) || t.startsWith(ANSWER_PREFIX);
+    }
+
+    /** Self contained direct connection offer, exchanged through any chat. */
+    public static String directOffer(JsonObject payload) {
+        return OFFER_PREFIX + encode(Json.GSON.toJson(payload));
+    }
+
+    public static JsonObject parseDirectOffer(String text) {
+        return Json.parse(decode(body(text, OFFER_PREFIX)));
+    }
+
+    public static String directAnswer(JsonObject payload) {
+        return ANSWER_PREFIX + encode(Json.GSON.toJson(payload));
+    }
+
+    public static JsonObject parseDirectAnswer(String text) {
+        return Json.parse(decode(body(text, ANSWER_PREFIX)));
+    }
+
+    public static boolean isDirectOffer(String text) {
+        return text != null && text.strip().startsWith(OFFER_PREFIX);
+    }
+
+    public static boolean isDirectAnswer(String text) {
+        return text != null && text.strip().startsWith(ANSWER_PREFIX);
     }
 
     private static String encode(String json) {

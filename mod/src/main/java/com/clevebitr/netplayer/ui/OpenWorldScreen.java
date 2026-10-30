@@ -4,6 +4,7 @@ import com.clevebitr.netplayer.Friend;
 import com.clevebitr.netplayer.NetPlayerClient;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.components.Button;
+import net.minecraft.client.gui.components.Tooltip;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.network.chat.Component;
 import net.minecraft.world.level.GameType;
@@ -35,11 +36,29 @@ public final class OpenWorldScreen extends Screen {
             addRenderableWidget(Button.builder(Component.translatable("netplayer.open.copy"), b -> {
                 minecraft.keyboardHandler.setClipboard(client.myRoomKey());
                 note = Component.translatable("netplayer.add.copied");
-            }).bounds(left, 60, 150, 20).build());
+            }).bounds(left, 56, 150, 20).build());
+
             addRenderableWidget(Button.builder(Component.translatable("netplayer.open.stop"), b -> {
                 client.closeWorld();
                 minecraft.setScreen(parent);
-            }).bounds(left + 160, 60, 150, 20).build());
+            }).bounds(left + 160, 56, 150, 20).build());
+
+            addRenderableWidget(Button.builder(Component.translatable("netplayer.button.direct_offer"), b -> {
+                client.generateDirectOffer();
+                note = Component.translatable("netplayer.open.generating");
+            }).bounds(left, 82, 150, 20)
+                    .tooltip(Tooltip.create(Component.translatable("netplayer.open.direct_tip")))
+                    .build());
+
+            addRenderableWidget(Button.builder(Component.translatable("netplayer.button.copy_direct"), b -> {
+                String code = client.lastDirectOffer();
+                if (code.isEmpty()) {
+                    note = Component.translatable("netplayer.open.no_direct");
+                } else {
+                    minecraft.keyboardHandler.setClipboard(code);
+                    note = Component.translatable("netplayer.add.copied");
+                }
+            }).bounds(left + 160, 82, 150, 20).build());
         } else if (minecraft.getSingleplayerServer() == null) {
             note = Component.translatable("netplayer.error.no_world");
         } else {
@@ -60,7 +79,7 @@ public final class OpenWorldScreen extends Screen {
 
             List<Friend> friends = client.friends();
             int y = 98;
-            for (int i = 0; i < Math.min(friends.size(), 5); i++) {
+            for (int i = 0; i < Math.min(friends.size(), 4); i++) {
                 Friend friend = friends.get(i);
                 String id = friend.profile.id;
                 Button button = Button.builder(rowLabel(friend), b -> {
@@ -107,13 +126,23 @@ public final class OpenWorldScreen extends Screen {
     @Override
     public void render(GuiGraphics graphics, int mouseX, int mouseY, float partialTick) {
         super.render(graphics, mouseX, mouseY, partialTick);
-        graphics.drawCenteredString(font, title, width / 2, 16, 0xFFFFFF);
-        if (!note.getString().isEmpty()) {
-            graphics.drawCenteredString(font, note, width / 2, height - 70, 0xFFAA00);
-        }
+        int left = width / 2 - 155;
+        graphics.drawCenteredString(font, title, width / 2, 12, 0xFFFFFF);
         if (client.hosting()) {
             graphics.drawCenteredString(font, Component.translatable("netplayer.open.is_open",
-                    client.room().world()), width / 2, 40, 0x55FF55);
+                    client.room().world()), width / 2, 36, 0x55FF55);
+            graphics.drawString(font, Component.translatable("netplayer.open.direct_line1"), left, 112, 0xA0A0A0, false);
+            graphics.drawString(font, Component.translatable("netplayer.open.direct_line2"), left, 124, 0xA0A0A0, false);
+            graphics.drawString(font, Component.translatable("netplayer.open.direct_line3"), left, 136, 0xA0A0A0, false);
+        } else if (!note.getString().isEmpty()) {
+            graphics.drawCenteredString(font, note, width / 2, 40, 0xFFAA00);
+        }
+        if (!note.getString().isEmpty() && client.hosting()) {
+            graphics.drawCenteredString(font, note, width / 2, height - 70, 0xFFAA00);
+        }
+        if (!client.connected()) {
+            graphics.drawCenteredString(font, Component.translatable("netplayer.status.direct_mode"),
+                    width / 2, height - 40, 0xFFCC00);
         }
     }
 

@@ -179,8 +179,8 @@ public final class FriendListScreen extends Screen {
         graphics.drawString(font, Component.translatable("netplayer.friends.count", client.friends().size()),
                 width / 2 - 155, height - 40, 0x808080, false);
         if (!client.connected()) {
-            graphics.drawCenteredString(font, Component.translatable("netplayer.status.disconnected"),
-                    width / 2, height - 40, 0xFF5555);
+            graphics.drawCenteredString(font, Component.translatable("netplayer.status.direct_mode"),
+                    width / 2, height - 40, 0xFFCC00);
         }
     }
 
