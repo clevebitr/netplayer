@@ -15,4 +15,4 @@ auto-breakpoint: false
 ## Current: M1 — M1 — 骨架/信令/ICE 隧道跑通（详见 #1-#6）
 
 goal: M1 验收中：两客户端已连信令，待人工走联机流程
-breakpoint: 等用户双开回归结果；随后做 TURN/公网信令
+breakpoint: M2 信令代码就绪，等 wrangler deploy + 双开回归

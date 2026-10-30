@@ -1038,10 +1038,23 @@ public final class NetPlayerClient {
         return String.join(", ", config.stunServers);
     }
 
+    /** Human readable endpoint currently in use (url or host:port). */
+    public String signalingAddress() {
+        init();
+        return config.signalingTarget();
+    }
+
+    /** Accepts either {@code host}, {@code host:port} or a {@code ws(s)://} / plain url. */
     public void applySettings(String host, int port, String stunCsv) {
         init();
-        config.signalingHost = host.isBlank() ? "127.0.0.1" : host.strip();
-        config.signalingPort = port <= 0 || port > 65535 ? 25566 : port;
+        String raw = host == null ? "" : host.strip();
+        if (raw.contains("://")) {
+            config.signalingUrl = raw;
+        } else {
+            config.signalingUrl = "";
+            config.signalingHost = raw.isBlank() ? "127.0.0.1" : raw;
+            config.signalingPort = port <= 0 || port > 65535 ? 25566 : port;
+        }
         List<String> servers = new ArrayList<>();
         for (String part : stunCsv.split("[,;\s]+")) {
             if (!part.isBlank()) {

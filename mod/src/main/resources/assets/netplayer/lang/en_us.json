@@ -124,5 +124,8 @@
   "netplayer.settings.state_connected": "Signaling: connected",
   "netplayer.settings.state_offline": "Signaling: not connected (direct mode still works)",
   "netplayer.settings.note": "Direct mode needs no server: Open to Friends -> Make Direct Code.",
-  "netplayer.settings.tooltip": "Signaling server and STUN settings"
+  "netplayer.settings.tooltip": "Signaling server and STUN settings",
+  "netplayer.settings.address": "Signaling server address",
+  "netplayer.settings.address_hint": "host:port or wss://your-worker.workers.dev/",
+  "netplayer.settings.address_note": "Plain host uses TCP; ws:// or wss:// switches to WebSocket."
 }

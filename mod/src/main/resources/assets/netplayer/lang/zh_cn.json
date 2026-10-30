@@ -124,5 +124,8 @@
   "netplayer.settings.state_connected": "信令：已连接",
   "netplayer.settings.state_offline": "信令：未连接（直连模式仍可用）",
   "netplayer.settings.note": "直连模式不需要服务器：对好友开放 → 生成直连码。",
-  "netplayer.settings.tooltip": "信令服务器与 STUN 设置"
+  "netplayer.settings.tooltip": "信令服务器与 STUN 设置",
+  "netplayer.settings.address": "信令服务器地址",
+  "netplayer.settings.address_hint": "host:port 或 wss://你的worker.workers.dev/",
+  "netplayer.settings.address_note": "纯 host 走 TCP；写 ws:// 或 wss:// 则改用 WebSocket。"
 }
