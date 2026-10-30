@@ -1,0 +1,50 @@
+name: beta release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: version
+        id: version
+        run: echo "name=1.0-beta-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+
+      - name: build
+        run: ./gradlew build -Pmod_version=${{ steps.version.outputs.name }} --no-daemon --stacktrace
+
+      - name: collect jars
+        run: |
+          mkdir -p dist
+          cp mod/build/libs/netplayer.jar "dist/netplayer-${{ steps.version.outputs.name }}.jar"
+          cp server/build/libs/netplayer-server.jar "dist/netplayer-server-${{ steps.version.outputs.name }}.jar"
+
+      - name: publish
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.version.outputs.name }}
+          name: NetPlayer ${{ steps.version.outputs.name }}
+          prerelease: true
+          generate_release_notes: true
+          body: |
+            Beta build from commit ${{ github.sha }}.
+
+            - `netplayer-*.jar` -> put into `mods/` (client only, Minecraft 1.21.11 + NeoForge 21.11.x)
+            - `netplayer-server-*.jar` -> `java -jar netplayer-server-*.jar --port 25566`
+          files: |
+            dist/*.jar

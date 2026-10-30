@@ -6,6 +6,15 @@ base {
     archivesName = 'netplayer'
 }
 
+def modVersion = providers.gradleProperty('mod_version').getOrElse('0.1.0')
+
+tasks.named('processResources', ProcessResources).configure {
+    inputs.property('mod_version', modVersion)
+    filesMatching('META-INF/neoforge.mods.toml') {
+        expand mod_version: modVersion
+    }
+}
+
 neoForge {
     version = project.neo_version
 
