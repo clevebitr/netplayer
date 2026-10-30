@@ -17,7 +17,7 @@ public final class AddFriendScreen extends Screen {
     private EditBox keyBox;
     private EditBox replyBox;
     private Component status = Component.empty();
-    private int statusColor = 0xA0A0A0;
+    private int statusColor = 0xFFA0A0A0;
 
     public AddFriendScreen(Screen parent) {
         super(Component.translatable("netplayer.add.title"));
@@ -45,7 +45,7 @@ public final class AddFriendScreen extends Screen {
 
         addRenderableWidget(Button.builder(Component.translatable("netplayer.button.copy_mine"), b -> {
             minecraft.keyboardHandler.setClipboard(client.myFriendKey());
-            setStatus("netplayer.add.copied", 0x55FF55);
+            setStatus("netplayer.add.copied", 0xFF55FF55);
         }).bounds(left, 130, 310, 20).build());
 
         replyBox = new EditBox(font, left, 178, 240, 18, Component.empty());
@@ -58,7 +58,7 @@ public final class AddFriendScreen extends Screen {
             String code = client.lastDirectAnswer();
             if (!code.isEmpty()) {
                 minecraft.keyboardHandler.setClipboard(code);
-                setStatus("netplayer.add.copied", 0x55FF55);
+                setStatus("netplayer.add.copied", 0xFF55FF55);
             }
         }).bounds(left + 244, 178, 66, 18).build());
 
@@ -66,7 +66,7 @@ public final class AddFriendScreen extends Screen {
                         b -> minecraft.setScreen(parent))
                 .bounds(left, height - 28, 310, 20).build());
 
-        setStatus("netplayer.add.tip", 0x808080);
+        setStatus("netplayer.add.tip", 0xFF808080);
     }
 
     private void submit() {
@@ -80,10 +80,10 @@ public final class AddFriendScreen extends Screen {
                 minecraft.setScreen(parent);
                 return;
             }
-            setStatus("netplayer.add.reply_ready", 0x55FF55);
+            setStatus("netplayer.add.reply_ready", 0xFF55FF55);
             return;
         }
-        setStatus(error, 0xFF5555);
+        setStatus(error, 0xFFFF5555);
     }
 
     private void setStatus(String key, int color) {
@@ -94,14 +94,14 @@ public final class AddFriendScreen extends Screen {
     @Override
     public void render(GuiGraphics graphics, int mouseX, int mouseY, float partialTick) {
         super.render(graphics, mouseX, mouseY, partialTick);
-        graphics.drawCenteredString(font, title, width / 2, 10, 0xFFFFFF);
+        graphics.drawCenteredString(font, title, width / 2, 10, 0xFFFFFFFF);
         int left = width / 2 - 155;
-        graphics.drawString(font, Component.translatable("netplayer.add.step1"), left, 34, 0xFFFF00, false);
+        graphics.drawString(font, Component.translatable("netplayer.add.step1"), left, 34, 0xFFFFFF00, false);
         graphics.drawString(font, status, left, 70, statusColor, false);
-        graphics.drawString(font, Component.translatable("netplayer.add.step2"), left, 96, 0xFFFF00, false);
-        graphics.drawString(font, Component.translatable("netplayer.add.step3"), left, 156, 0xFFFF00, false);
+        graphics.drawString(font, Component.translatable("netplayer.add.step2"), left, 96, 0xFFFFFF00, false);
+        graphics.drawString(font, Component.translatable("netplayer.add.step3"), left, 156, 0xFFFFFF00, false);
         if (client.lastDirectAnswer().isEmpty()) {
-            graphics.drawString(font, Component.translatable("netplayer.add.reply_empty"), left, 200, 0x707070, false);
+            graphics.drawString(font, Component.translatable("netplayer.add.reply_empty"), left, 200, 0xFF707070, false);
         }
     }
 

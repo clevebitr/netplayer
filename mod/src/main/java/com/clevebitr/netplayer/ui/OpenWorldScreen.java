@@ -146,28 +146,28 @@ public final class OpenWorldScreen extends Screen {
     public void render(GuiGraphics graphics, int mouseX, int mouseY, float partialTick) {
         super.render(graphics, mouseX, mouseY, partialTick);
         int left = width / 2 - 155;
-        graphics.drawCenteredString(font, title, width / 2, 12, 0xFFFFFF);
+        graphics.drawCenteredString(font, title, width / 2, 12, 0xFFFFFFFF);
         if (client.hosting()) {
             graphics.drawCenteredString(font, Component.translatable("netplayer.open.is_open",
-                    client.room().world()), width / 2, 36, 0x55FF55);
-            graphics.drawString(font, Component.translatable("netplayer.open.direct_line1"), left, 134, 0xA0A0A0, false);
-            graphics.drawString(font, Component.translatable("netplayer.open.direct_line2"), left, 146, 0xA0A0A0, false);
-            graphics.drawString(font, Component.translatable("netplayer.open.direct_line3"), left, 158, 0xA0A0A0, false);
+                    client.room().world()), width / 2, 36, 0xFF55FF55);
+            graphics.drawString(font, Component.translatable("netplayer.open.direct_line1"), left, 134, 0xFFA0A0A0, false);
+            graphics.drawString(font, Component.translatable("netplayer.open.direct_line2"), left, 146, 0xFFA0A0A0, false);
+            graphics.drawString(font, Component.translatable("netplayer.open.direct_line3"), left, 158, 0xFFA0A0A0, false);
             graphics.drawString(font, Component.translatable(client.room().premium()
-                    ? "netplayer.open.premium_on" : "netplayer.open.premium_off"), left, 176, 0x80C0FF, false);
+                    ? "netplayer.open.premium_on" : "netplayer.open.premium_off"), left, 176, 0xFF80C0FF, false);
         } else if (!note.getString().isEmpty()) {
-            graphics.drawCenteredString(font, note, width / 2, 40, 0xFFAA00);
+            graphics.drawCenteredString(font, note, width / 2, 40, 0xFFFFAA00);
         }
         if (!client.localPremiumCapable()) {
             graphics.drawString(font, Component.translatable("netplayer.open.local_not_premium"),
-                    left, 218, 0xFF8855, false);
+                    left, 218, 0xFFFF8855, false);
         }
         if (!note.getString().isEmpty() && client.hosting()) {
-            graphics.drawCenteredString(font, note, width / 2, height - 70, 0xFFAA00);
+            graphics.drawCenteredString(font, note, width / 2, height - 70, 0xFFFFAA00);
         }
         if (!client.connected()) {
             graphics.drawCenteredString(font, Component.translatable("netplayer.status.direct_mode"),
-                    width / 2, height - 40, 0xFFCC00);
+                    width / 2, height - 40, 0xFFFFCC00);
         }
     }
 

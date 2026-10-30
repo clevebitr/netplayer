@@ -84,31 +84,31 @@ public final class FriendDetailScreen extends Screen {
         NetPlayerClient.LinkInfo link = client.linkInfo(friendId);
         int left = width / 2 - 155;
 
-        graphics.drawCenteredString(font, title, width / 2, 10, 0xFFFFFF);
+        graphics.drawCenteredString(font, title, width / 2, 10, 0xFFFFFFFF);
         Heads.draw(graphics, friend.mcName, friend.mcUuid, left, 28, 32);
 
-        graphics.drawString(font, Component.literal(friend.label()), left + 38, 30, 0xFFFFFF, false);
+        graphics.drawString(font, Component.literal(friend.label()), left + 38, 30, 0xFFFFFFFF, false);
         if (!friend.mcName.isEmpty()) {
-            graphics.drawString(font, Component.literal(friend.mcName), left + 38, 42, 0xA0A0A0, false);
+            graphics.drawString(font, Component.literal(friend.mcName), left + 38, 42, 0xFFA0A0A0, false);
         }
         graphics.drawString(font, Component.translatable("netplayer.detail.id", friend.profile.id),
-                left + 38, 54, 0x808080, false);
+                left + 38, 54, 0xFF808080, false);
 
-        graphics.drawString(font, Component.translatable("netplayer.detail.status"), left, 68, 0xFFFF55, false);
-        graphics.drawString(font, presenceText(presence), left, 80, 0xFFFFFF, false);
+        graphics.drawString(font, Component.translatable("netplayer.detail.status"), left, 68, 0xFFFFFF55, false);
+        graphics.drawString(font, presenceText(presence), left, 80, 0xFFFFFFFF, false);
 
-        graphics.drawString(font, Component.translatable("netplayer.detail.link"), left, 94, 0xFFFF55, false);
-        graphics.drawString(font, linkText(link), left, 106, link.active() ? 0x55FF55 : 0x909090, false);
+        graphics.drawString(font, Component.translatable("netplayer.detail.link"), left, 94, 0xFFFFFF55, false);
+        graphics.drawString(font, linkText(link), left, 106, link.active() ? 0xFF55FF55 : 0xFF909090, false);
         if (link.active() && (!link.local().isEmpty() || !link.remote().isEmpty())) {
             graphics.drawString(font, Component.literal(link.local() + "  ->  " + link.remote()),
-                    left, 118, 0x707070, false);
+                    left, 118, 0xFF707070, false);
         }
-        graphics.drawString(font, Component.translatable("netplayer.detail.note"), left, 132, 0xFFFF55, false);
+        graphics.drawString(font, Component.translatable("netplayer.detail.note"), left, 132, 0xFFFFFF55, false);
 
         boolean up = client.connected();
         graphics.drawString(font, Component.translatable(up
                         ? "netplayer.status.signal_connected" : "netplayer.status.signal_offline"),
-                left, height - 42, up ? 0x55FF55 : 0xFFAA00, false);
+                left, height - 42, up ? 0xFF55FF55 : 0xFFFFAA00, false);
     }
 
     private Component presenceText(Presence presence) {

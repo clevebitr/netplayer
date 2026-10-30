@@ -53,3 +53,12 @@ DO 实现要点：单实例 idFromName("global") 模拟 Java 的 synchronized �
 验证：signal-worker npm run typecheck 通过；wrangler dev 下 node test/smoke.mjs 全绿（伪造 hello 被拒、双向 presence、在线/离线好友请求、房间开/关、join_req/ans、ICE 转发去 to、白名单 vs 房间令牌）；./gradlew :core:test -Pnetplayer.signal.url=ws://127.0.0.1:8787/ 跑通 Java 客户端到 Worker 的真实握手；:mod:compileJava 通过。注意 npm 11 会拦 esbuild/workerd 的 postinstall（warning 而已，wrangler dev 正常跑）。
 
 其它免费托管候选（没选，留档）：Oracle Always Free ARM 4C/24G 及 GCP e2-micro 能跑现有 TCP jar 且零改动，但 Oracle 有闲置回收（本服务负载极低正好会被判闲置）；Fly.io 2024-10 起取消免费；Render/Railway/Koyeb/Zeabur 只暴露 HTTP(S)，同样逼你上 WS。TURN 方面 Cloudflare Realtime TURN 有 1TB/月免费额度但需要 API 换凭证且是 RFC8656 标准 TURN，ice4j 支持很弱，下一里程碑更可能是自建 coturn。
+
+## 2026-10-30 — 1.21.11 自绘文字 alpha=0 不显示等 UI 坑
+
+1.21.11 的 GuiGraphics.drawString 内部是 `if (ARGB.alpha(color) != 0) submitText(...)`，直接用 0xRRGGBB（alpha=0）写颜色会**完全不渲染**，而且没有任何报错/警告。症状很像"UI 没标题/没提示"，但按钮(自带 ARGB)正常。以后所有自绘颜色一律 0xFFRRGGBB；改完 UI 若发现只有控件文字、没有自己画的文字，先查 alpha。
+
+同时记下几个同批踩到的坑：
+- 暂停/标题菜单插行要用原版 GridLayout 真实尺寸：单元格 106、按钮 98、整行 204（4px padding），否则右侧那列会偏 4px。
+- 自定义域名 + Workers Route 必须另有代理开启的 DNS 记录，Route 不会创建记录；netplayer.clevebitr.dpdns.org 当时是 NXDOMAIN。
+- 游戏 JVM 不吃 Windows 系统代理，wss://*.workers.dev 直连超时；已在 config 与设置界面加 proxyHost/proxyPort，WSS 与 Mojang 校验都走它。
