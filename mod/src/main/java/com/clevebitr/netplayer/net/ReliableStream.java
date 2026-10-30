@@ -15,6 +15,8 @@ public final class ReliableStream {
     public static final int DATA = 2;
     public static final int ACK = 3;
     public static final int FIN = 4;
+    public static final int PING = 5;
+    public static final int PONG = 6;
 
     private static final int HEADER = 11;
     private static final int WINDOW = 32;
@@ -141,6 +143,17 @@ public final class ReliableStream {
             if (type == DATA && size > 0 && packet.length >= HEADER + size) {
                 deliver(seq, Arrays.copyOfRange(packet, HEADER, HEADER + size));
                 emit(ACK, nextSeq, expect, EMPTY);
+            } else if (type == PING) {
+                if (size >= 8) {
+                    emit(PONG, 0, expect, Arrays.copyOfRange(packet, HEADER, HEADER + size));
+                }
+            } else if (type == PONG) {
+                if (size >= 8) {
+                    long sent = readLong(packet, HEADER);
+                    if (sent > 0) {
+                        rttMillis = (int) Math.max(0, System.currentTimeMillis() - sent);
+                    }
+                }
             } else if (type == FIN) {
                 if (finSeq < 0) {
                     finSeq = seq;
@@ -149,6 +162,23 @@ public final class ReliableStream {
                 emit(ACK, nextSeq, expect, EMPTY);
                 lock.notifyAll();
             }
+        }
+    }
+
+    private volatile int rttMillis = -1;
+
+    public int rttMillis() {
+        return rttMillis;
+    }
+
+    public void ping() {
+        long now = System.currentTimeMillis();
+        byte[] stamp = new byte[8];
+        for (int i = 0; i < 8; i++) {
+            stamp[i] = (byte) (now >>> (56 - i * 8));
+        }
+        synchronized (lock) {
+            emit(PING, 0, expect, stamp);
         }
     }
 
@@ -222,6 +252,14 @@ public final class ReliableStream {
         b[at + 1] = (byte) (value >>> 16);
         b[at + 2] = (byte) (value >>> 8);
         b[at + 3] = (byte) value;
+    }
+
+    private static long readLong(byte[] b, int at) {
+        long value = 0;
+        for (int i = 0; i < 8; i++) {
+            value = (value << 8) | (b[at + i] & 0xffL);
+        }
+        return value;
     }
 
     private static int readShort(byte[] b, int at) {

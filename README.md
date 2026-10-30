@@ -11,6 +11,7 @@ ICE/UDP instead of asking anyone to configure a router.
 - Friend list in the title screen, the pause menu and on a hotkey (`F9` by default)
 - Friends are added with a self contained invite key, no account registration
 - One click "Open to friends" for one friend, several friends or everyone
+  (only offered while you are in your own world, never someone else's)
 - Right top toast notifications when a friend comes online or starts playing
 - Join requests are always confirmed by the host, then the guest leaves its current world
   automatically and connects to the host world
@@ -21,7 +22,7 @@ ICE/UDP instead of asking anyone to configure a router.
 
 | Layer | Implementation |
 | --- | --- |
-| Signaling | A tiny TCP/JSON rendezvous server (`server/`), only presence, friend requests and ICE candidates |
+| Signaling | A tiny JSON rendezvous server, only presence, friend requests and ICE candidates. Two interchangeable builds: `server/` (Java, TCP) and `signal-worker/` (Cloudflare Workers + Durable Objects, WebSocket, free) |
 | NAT traversal | [ice4j](https://github.com/jitsi/ice4j): host candidates plus STUN discovered server reflexive candidates |
 | Transport | Custom reliable ordered byte stream over UDP (`ReliableStream`), encrypted per datagram |
 | Game | The host publishes its integrated server to LAN, the guest gets a loopback TCP port on its side |
@@ -70,6 +71,7 @@ Both the host and the guest need the mod. A dedicated server does **not**.
 
 ```json
 {
+  "signalingUrl": "",
   "signalingHost": "127.0.0.1",
   "signalingPort": 25566,
   "stunServers": ["stun.miwifi.com:3478", "stun.chat.bilibili.com:3478"],
@@ -78,7 +80,9 @@ Both the host and the guest need the mod. A dedicated server does **not**.
 }
 ```
 
-Point `signalingHost` / `signalingPort` at your own signaling server if you run one.
+`signalingUrl` takes precedence when it is set, e.g.
+`"signalingUrl": "wss://netplayer-signal.example.workers.dev/"`. Leave it empty to use
+`signalingHost` / `signalingPort` (the self hosted TCP server) instead.
 
 `verifyPremium` (default `true`) makes the host check the guest against Mojang's session server
 (`session/minecraft/join` + `hasJoined`), the same two calls an online-mode server does, so only
@@ -87,6 +91,24 @@ to `sessionserver.mojang.com` on both sides. Development clients use an offline 
 off while testing in the IDE.
 
 ## Running the signaling server
+
+Two builds of the same protocol. Clients pick one with `signalingUrl` (WebSocket) or
+`signalingHost` / `signalingPort` (TCP).
+
+### Cloudflare Workers + Durable Objects (free, no card, no server to babysit)
+
+```bash
+cd signal-worker
+npm install
+npx wrangler login
+npx wrangler deploy
+# -> https://netplayer-signal.<you>.workers.dev  ("signalingUrl": "wss://.../")
+```
+
+Free plan friendly: WebSocket in, Durable Object state, hibernating while idle. Details, local dev
+and the protocol test live in [signal-worker/README.md](signal-worker/README.md).
+
+### Self hosted TCP server
 
 ```bash
 ./gradlew :server:build
@@ -99,6 +121,9 @@ or with Docker:
 docker build -t netplayer-signal server
 docker run -d -p 25566:25566 netplayer-signal
 ```
+
+Any host that gives you an open TCP port works; the Cloudflare Worker above exists because
+Cloudflare itself does not expose inbound raw TCP on the free plan.
 
 ## Building the mod
 

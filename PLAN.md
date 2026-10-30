@@ -10,6 +10,7 @@ auto-breakpoint: false
 ## Milestones
 
 - [ ] M1 — M1 — 骨架/信令/ICE 隧道跑通（详见 #1-#6）
+- [ ] M2 — M2 — 免费公网信令（Workers+DO 已就绪，待部署回归，详见 #5）
 
 ## Current: M1 — M1 — 骨架/信令/ICE 隧道跑通（详见 #1-#6）
 

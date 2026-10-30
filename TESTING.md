@@ -17,6 +17,36 @@ java -jar server/build/libs/netplayer-server.jar --port 25566
 两个客户端用不同的游戏目录，因此有**各自独立的身份**（`mod/run/netplayer/identity.json` 与
 `mod/run2/netplayer/identity.json`），可以互加好友。信令地址默认就是 `127.0.0.1:25566`。
 
+## 0.5 用 Workers 免费信令（wss://）代替本机 TCP
+
+想验证线上那种部署（信令走 WebSocket、TLS、443）时用这条，业务逻辑与第 1 节完全一致。
+
+```bash
+cd signal-worker
+npm install
+npm run dev            # 本地 wrangler，监听 ws://127.0.0.1:8787/
+npm run smoke          # 协议端到端自检（伪造签名/离线队列/房间令牌都会跑到）
+```
+
+然后给两个开发客户端加上 `signalingUrl`（`mod/run/netplayer/config.json` 与
+`mod/run2/netplayer/config.json`）：
+
+```json
+{ "signalingUrl": "ws://127.0.0.1:8787/" }
+```
+
+`signalingUrl` 非空时优先，端口和 host 被忽略；清空就退回 TCP。控制台应出现
+`connected to signaling server ws://127.0.0.1:8787/`，之后按第 1 节表格逐条走。
+
+已部署的线上地址同理，把值换成 `wss://netplayer-signal.<你的>.workers.dev/`，
+再确认 `curl https://…/` 返回 `"ok": true`。
+
+Java 客户端到 ws 服务的连通性可以单独测，不用起游戏：
+
+```bash
+./gradlew :core:test -Pnetplayer.signal.url=ws://127.0.0.1:8787/
+```
+
 ## 1. 单机双开（必做，覆盖业务流）
 
 | # | 操作 | 期望 |

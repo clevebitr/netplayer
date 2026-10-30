@@ -21,6 +21,8 @@ public final class FriendListScreen extends Screen {
     private final Screen parent;
     private final NetPlayerClient client = NetPlayerClient.get();
     private final List<AbstractWidget> rows = new ArrayList<>();
+    private final List<String> rowFriendIds = new ArrayList<>();
+    private final List<Integer> rowTops = new ArrayList<>();
     private EditBox search;
     private int page;
     private String filter = "";
@@ -35,7 +37,7 @@ public final class FriendListScreen extends Screen {
         client.init();
         int left = width / 2 - 155;
 
-        search = new EditBox(font, left, 32, 200, 18, Component.translatable("netplayer.friends.search"));
+        search = new EditBox(font, left, 32, 150, 18, Component.translatable("netplayer.friends.search"));
         search.setMaxLength(64);
         search.setValue(filter);
         search.setResponder(value -> {
@@ -47,8 +49,14 @@ public final class FriendListScreen extends Screen {
 
         addRenderableWidget(Button.builder(Component.translatable("netplayer.button.add_friend"),
                         b -> minecraft.setScreen(new AddFriendScreen(this)))
-                .bounds(left + 204, 32, 106, 18)
+                .bounds(left + 154, 32, 76, 18)
                 .tooltip(Tooltip.create(Component.translatable("netplayer.friends.add_tip")))
+                .build());
+
+        addRenderableWidget(Button.builder(Component.translatable("netplayer.button.settings"),
+                        b -> minecraft.setScreen(new SettingsScreen(this)))
+                .bounds(left + 234, 32, 76, 18)
+                .tooltip(Tooltip.create(Component.translatable("netplayer.settings.tooltip")))
                 .build());
 
         addRenderableWidget(Button.builder(Component.literal("<"),
@@ -75,6 +83,8 @@ public final class FriendListScreen extends Screen {
             removeWidget(widget);
         }
         rows.clear();
+        rowFriendIds.clear();
+        rowTops.clear();
 
         int left = width / 2 - 155;
         int y = 58;
@@ -111,21 +121,14 @@ public final class FriendListScreen extends Screen {
             used++;
             Friend friend = visible.get(index);
             Presence presence = client.presence(friend.profile.id);
-            Component label = Component.literal(friend.label() + "  ").append(status(friend.profile.id, presence));
-            Button join = Button.builder(label, b -> client.requestJoin(friend.profile.id))
-                    .bounds(left, y, 268, 20).build();
-            join.active = presence.openTo(client.me().id);
-            join.setTooltip(Tooltip.create(Component.translatable(presence.openTo(client.me().id)
-                    ? "netplayer.friends.join_tip" : "netplayer.friends.not_open_tip")));
-            rows.add(addRow(join));
-
-            String id = friend.profile.id;
-            rows.add(addRow(Button.builder(Component.literal("\u2715"), b -> {
-                client.removeFriend(id);
-                refreshRows();
-            }).bounds(left + 272, y, 38, 20)
-                    .tooltip(Tooltip.create(Component.translatable("netplayer.friends.remove_tip")))
+            Component label = Component.literal(friend.label()).append("   ").append(status(friend.profile.id, presence));
+            rows.add(addRow(Button.builder(label,
+                            b -> minecraft.setScreen(new FriendDetailScreen(this, friend.profile.id)))
+                    .bounds(left + 22, y, 288, 20)
+                    .tooltip(Tooltip.create(Component.translatable("netplayer.friends.detail_tip")))
                     .build()));
+            rowFriendIds.add(friend.profile.id);
+            rowTops.add(y);
             y += ROW_HEIGHT;
         }
 
@@ -176,10 +179,19 @@ public final class FriendListScreen extends Screen {
     @Override
     public void render(GuiGraphics graphics, int mouseX, int mouseY, float partialTick) {
         super.render(graphics, mouseX, mouseY, partialTick);
+        int left = width / 2 - 155;
         graphics.drawCenteredString(font, title, width / 2, 8, 0xFFFFFF);
         graphics.drawCenteredString(font, Component.translatable("netplayer.friends.hint"), width / 2, 21, 0xA0A0A0);
+
+        for (int i = 0; i < rowFriendIds.size(); i++) {
+            Friend friend = client.friendMap().get(rowFriendIds.get(i));
+            if (friend != null) {
+                Heads.draw(graphics, friend.mcName, friend.mcUuid, left + 3, rowTops.get(i) + 2, 16);
+            }
+        }
+
         graphics.drawString(font, Component.translatable("netplayer.friends.count", client.friends().size()),
-                width / 2 - 155, height - 40, 0x808080, false);
+                left, height - 40, 0x808080, false);
         if (!client.connected()) {
             graphics.drawCenteredString(font, Component.translatable("netplayer.status.direct_mode"),
                     width / 2, height - 40, 0xFFCC00);

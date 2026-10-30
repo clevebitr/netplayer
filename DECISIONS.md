@@ -30,3 +30,26 @@
 2) 无信令（纯 P2P 信令）模式：房主在自己已 publishServer 的世界上生成 npair1 直连码（内含 host profile/room/world/port/allow + ice{ufrag,pwd,cands} + 临时 X25519 公钥 + Ed25519 签名 "direct-offer:room:ufrag:pwd:epk"），通过任意聊天发给好友；好友粘贴后生成 npans1 应答码（同样的签名格式 "direct-answer:..."），房主再粘回应答码。两侧复用同一套 IceLink/Tunnel/JoinFlow：房主不 controlling、好友 controlling，好友 ICE 通过后开 127.0.0.1 端口并走既有 progressJoin 连进世界。码长约 1.6KB（base64url + 8 位校验）。一次性：重新生成会让旧应答码失效（room 不匹配 → direct_stale）。白名单仍生效。
 
 3) 直连测试脚本验证：offer/answer 码往返 + 1.5s 人为延迟（模拟粘贴时间）+ ICE 完成 + 128KiB 回显 57ms，说明"房主后粘贴应答码"这条时序 OK（ice4j 会把先到的检查放进 preDiscoveredPairsQueue）。
+
+## 2026-10-30 — 正版验证的实现取舍
+
+正版验证没有去改 IntegratedServer 的 online-mode（改了会让主机自己的本地连接也要走加密握手，LAN 会直接不可用），而是在 mod 层做"进隧道前的准入检查"，用的正是原版 online-mode 服务器的两个 session 接口：
+- 客端 sessionserver /session/minecraft/join（accessToken + selectedProfile + 随机 serverId）
+- 主机 sessionserver /session/minecraft/hasJoined?username=&serverId= → 200 带 profile 才算通过
+证明只证明"账号归属"，不改变游戏内身份（LAN 仍是 offline UUID），所以不会破皮肤/名字逻辑。
+
+证明随 join_req（信令）或 npans1 应答码（直连）一起走，并被各自的 Ed25519 身份签名覆盖（direct-answer 签名串里已含 room/ufrag/pwd/epk；信令路径靠服务器 hello 的签名身份绑定）。room 的 premium 标志进 presence，客端据此决定要不要先生成证明；房主在点「同意」时才 hasJoined（避免证明过早过期）。
+
+Config 默认 verifyPremium=true，OpenWorldScreen 里有开关且写入 config.json。开发/离线账号 token 是 "0"，localPremiumCapable()=false → 客端直接给出「本机账号无法通过正版验证」而不是静默失败；房主界面上也常驻一行橙色提示。sessionserver.mojang.com 本机可达（hasJoined 返回 204）。
+
+## 2026-10-30 — WebSocket 信令 + Workers/DO 免费部署
+
+约束：Cloudflare 免费层没有入站裸 TCP（公网 TCP 要 Spectrum，付费/合同），只有入站 WebSocket。所以新增 signal-worker/（TS，Workers + Durable Object），协议与 server/ 的 Java TCP 版**完全同构**：{"t":..,"d":..}，只有分帧变了（WS 一帧一条，读侧仍按 \n 切）。客户端 core/SignalClient 现在两条传输并存：connect(host,port) 走 TCP、connectUrl(ws://|wss://) 走 JDK 自带 java.net.http.WebSocket（发送走单独虚拟线程串行 sendText，避免 overlapping send 的 IllegalStateException）；mod/Config 加 signalingUrl，非空优先。
+
+DO 实现要点：单实例 idFromName("global") 模拟 Java 的 synchronized 全局锁；Hibernation WS API（ctx.acceptWebSocket + serializeAttachment 存 id/state/detail/roomId）让空闲不结算 duration；watchers/rooms/pending/tickets 写进 DO storage 单键 "state"（内存缓存 + 写穿）。免费额度：Worker 请求 100k/天、DO 请求 100k/天、duration 13k GB-s/天；WS 升级算 1 次请求，帧算 DO 请求，好友级别用量差好几个数量级。免费层 DO 必须 SQLite 后端 → migrations 用 new_sqlite_classes。Ed25519 用 crypto.subtle（workerd 已实现 secure curves），profile.ed 是 X.509 SPKI，直接 importKey("spki")，失败再退 raw 32 字节。
+
+顺手修掉 Java 版的真 bug：disconnect() 先 watchers.remove(session.id) 再 subscribersOf(session.id)，于是「好友离线」永远不广播；同时把 watchers 订阅表保留跨断线（订阅的是人不是连接），这样 hello() 里那段推送 presence 才不是死代码。两版现在一致。TS 额外加 ping→pong（不认的客户端会 ignore）。
+
+验证：signal-worker npm run typecheck 通过；wrangler dev 下 node test/smoke.mjs 全绿（伪造 hello 被拒、双向 presence、在线/离线好友请求、房间开/关、join_req/ans、ICE 转发去 to、白名单 vs 房间令牌）；./gradlew :core:test -Pnetplayer.signal.url=ws://127.0.0.1:8787/ 跑通 Java 客户端到 Worker 的真实握手；:mod:compileJava 通过。注意 npm 11 会拦 esbuild/workerd 的 postinstall（warning 而已，wrangler dev 正常跑）。
+
+其它免费托管候选（没选，留档）：Oracle Always Free ARM 4C/24G 及 GCP e2-micro 能跑现有 TCP jar 且零改动，但 Oracle 有闲置回收（本服务负载极低正好会被判闲置）；Fly.io 2024-10 起取消免费；Render/Railway/Koyeb/Zeabur 只暴露 HTTP(S)，同样逼你上 WS。TURN 方面 Cloudflare Realtime TURN 有 1TB/月免费额度但需要 API 换凭证且是 RFC8656 标准 TURN，ice4j 支持很弱，下一里程碑更可能是自建 coturn。

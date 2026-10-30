@@ -8,6 +8,7 @@ import org.ice4j.Transport;
 import org.ice4j.TransportAddress;
 import org.ice4j.ice.Agent;
 import org.ice4j.ice.Candidate;
+import org.ice4j.ice.CandidatePair;
 import org.ice4j.ice.CandidateType;
 import org.ice4j.ice.Component;
 import org.ice4j.ice.IceMediaStream;
@@ -125,6 +126,48 @@ public final class IceLink implements AutoCloseable {
             }
         }
         return agent.getState() == IceProcessingState.COMPLETED;
+    }
+
+    /** Human readable description of the path that was actually selected. */
+    public record PairInfo(String kind, String local, String remote) {
+        public static final PairInfo EMPTY = new PairInfo("", "", "");
+    }
+
+    public PairInfo pairInfo() {
+        try {
+            CandidatePair pair = component.getSelectedPair();
+            if (pair == null) {
+                return PairInfo.EMPTY;
+            }
+            LocalCandidate local = pair.getLocalCandidate();
+            RemoteCandidate remote = pair.getRemoteCandidate();
+            String localAddress = local.getTransportAddress().getHostAddress() + ":"
+                    + local.getTransportAddress().getPort();
+            String remoteAddress = remote.getTransportAddress().getHostAddress() + ":"
+                    + remote.getTransportAddress().getPort();
+            return new PairInfo(kindOf(local, remote), localAddress, remoteAddress);
+        } catch (Exception e) {
+            return PairInfo.EMPTY;
+        }
+    }
+
+    private static String kindOf(LocalCandidate local, RemoteCandidate remote) {
+        java.net.InetAddress localAddress = local.getTransportAddress().getAddress();
+        java.net.InetAddress remoteAddress = remote.getTransportAddress().getAddress();
+        if (local.getType() == CandidateType.RELAYED_CANDIDATE || remote.getType() == CandidateType.RELAYED_CANDIDATE) {
+            return "relay";
+        }
+        if (localAddress != null && remoteAddress != null
+                && (localAddress.isLoopbackAddress() || localAddress.isSiteLocalAddress()
+                    || localAddress.isLinkLocalAddress())
+                && (remoteAddress.isLoopbackAddress() || remoteAddress.isSiteLocalAddress()
+                    || remoteAddress.isLinkLocalAddress())) {
+            return "lan";
+        }
+        if (localAddress instanceof java.net.Inet6Address || remoteAddress instanceof java.net.Inet6Address) {
+            return "ipv6";
+        }
+        return "punch";
     }
 
     public boolean isRelayed() {

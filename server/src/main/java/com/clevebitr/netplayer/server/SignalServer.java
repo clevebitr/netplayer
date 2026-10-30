@@ -156,6 +156,8 @@ public final class SignalServer implements AutoCloseable {
         }
         session.state = msg.str("state").isEmpty() ? "menu" : msg.str("state");
         session.detail = msg.str("detail");
+        session.mcName = msg.str("name");
+        session.mcUuid = msg.str("uuid");
         broadcastPresence(session.id);
     }
 
@@ -283,7 +285,8 @@ public final class SignalServer implements AutoCloseable {
         }
         if (online.get(session.id) == session) {
             online.remove(session.id);
-            watchers.remove(session.id);
+            // Note: watchers.get(session.id) (the sessions that follow me) is intentionally kept, so
+            // the next hello() can push my fresh presence to them. Only my own subscriptions go away.
             watchers.entrySet().removeIf(e -> {
                 e.getValue().remove(session.id);
                 return e.getValue().isEmpty();
@@ -326,7 +329,7 @@ public final class SignalServer implements AutoCloseable {
         if (s == null) {
             return msg.put("state", "offline").put("detail", "");
         }
-        msg.put("state", s.state).put("detail", s.detail);
+        msg.put("state", s.state).put("detail", s.detail).put("name", s.mcName).put("uuid", s.mcUuid);
         Room room = s.roomId == null ? null : rooms.get(s.roomId);
         if (room != null && room.host().equals(id)) {
             JsonArray allow = new JsonArray();
@@ -400,6 +403,8 @@ public final class SignalServer implements AutoCloseable {
         JsonObject profile;
         String state = "menu";
         String detail = "";
+        String mcName = "";
+        String mcUuid = "";
         String roomId;
 
         Session(Socket socket) {

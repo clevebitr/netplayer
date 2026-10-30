@@ -8,4 +8,8 @@ dependencies {
 
 tasks.named('test') {
     useJUnitPlatform()
+    // Live WebSocket check against a running signaling server:
+    //   ./gradlew :core:test -Pnetplayer.signal.url=ws://127.0.0.1:8787/
+    systemProperty 'netplayer.signal.url',
+            project.findProperty('netplayer.signal.url') ?: System.getProperty('netplayer.signal.url', '')
 }

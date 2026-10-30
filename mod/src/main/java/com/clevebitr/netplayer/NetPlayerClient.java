@@ -76,6 +76,7 @@ public final class NetPlayerClient {
     private final Map<String, IceState> icePeers = new ConcurrentHashMap<>();
     private final Map<String, Msg> earlyIce = new ConcurrentHashMap<>();
 
+    private volatile boolean restoreAuth = true;
     private volatile IceState directPending;
     private volatile String lastDirectOffer = "";
     private volatile String lastDirectAnswer = "";
@@ -150,7 +151,7 @@ public final class NetPlayerClient {
                 sentPresence = "";
             }
         });
-        if (!client.connect(config.signalingHost, config.signalingPort, 5000)) {
+        if (!connect(client)) {
             return;
         }
         signal = client;
@@ -160,7 +161,15 @@ public final class NetPlayerClient {
                 .put("profile", identity.profile.toJson())
                 .put("ts", ts)
                 .put("sig", Bytes.b64(identity.sign(payload.getBytes(StandardCharsets.UTF_8)))));
-        LOG.info("connected to signaling server {}:{}", config.signalingHost, config.signalingPort);
+        LOG.info("connected to signaling server {}", config.signalingTarget());
+    }
+
+    private boolean connect(SignalClient client) {
+        String url = config.signalingUrl;
+        if (url != null && !url.isBlank()) {
+            return client.connectUrl(url.trim(), 5000);
+        }
+        return client.connect(config.signalingHost, config.signalingPort, 5000);
     }
 
     public boolean connected() {
@@ -251,6 +260,14 @@ public final class NetPlayerClient {
         }
     }
 
+    public void setNote(String id, String note) {
+        Friend friend = friends.get(id);
+        if (friend != null) {
+            friend.note = note == null ? "" : note;
+            saveFriends();
+        }
+    }
+
     public void removeFriend(String id) {
         friends.remove(id);
         presences.remove(id);
@@ -278,7 +295,11 @@ public final class NetPlayerClient {
             JsonElement list = root.get("friends");
             if (list != null && list.isJsonArray()) {
                 for (JsonElement element : list.getAsJsonArray()) {
-                    Friend friend = new Friend(Profile.fromJson(element.getAsJsonObject()));
+                    JsonObject entry = element.getAsJsonObject();
+                    Friend friend = new Friend(Profile.fromJson(entry));
+                    friend.note = Json.str(entry, "note");
+                    friend.mcName = Json.str(entry, "mc_name");
+                    friend.mcUuid = Json.str(entry, "mc_uuid");
                     friends.put(friend.profile.id, friend);
                 }
             }
@@ -290,7 +311,11 @@ public final class NetPlayerClient {
         try {
             JsonArray array = new JsonArray();
             for (Friend friend : friends.values()) {
-                array.add(friend.profile.toJson());
+                JsonObject entry = friend.profile.toJson();
+                entry.addProperty("note", friend.note == null ? "" : friend.note);
+                entry.addProperty("mc_name", friend.mcName == null ? "" : friend.mcName);
+                entry.addProperty("mc_uuid", friend.mcUuid == null ? "" : friend.mcUuid);
+                array.add(entry);
             }
             JsonObject root = Json.obj();
             root.add("friends", array);
@@ -320,7 +345,13 @@ public final class NetPlayerClient {
         String marker = state + "|" + detail;
         if (!marker.equals(sentPresence)) {
             sentPresence = marker;
-            send(Msg.of("presence").put("state", state).put("detail", detail));
+            Msg msg = Msg.of("presence").put("state", state).put("detail", detail);
+            User user = mc.getUser();
+            if (user != null) {
+                msg.put("name", user.getName());
+                msg.put("uuid", user.getProfileId() == null ? "" : user.getProfileId().toString());
+            }
+            send(msg);
         }
     }
 
@@ -341,6 +372,23 @@ public final class NetPlayerClient {
         presence.roomId = Json.str(room, "id");
         presence.world = Json.str(room, "world");
         presence.premium = Json.bool(room, "premium");
+        presence.mcName = msg.str("name");
+        presence.mcUuid = msg.str("uuid");
+        Friend known = friends.get(id);
+        if (known != null) {
+            boolean changed = false;
+            if (!presence.mcName.isEmpty() && !presence.mcName.equals(known.mcName)) {
+                known.mcName = presence.mcName;
+                changed = true;
+            }
+            if (!presence.mcUuid.isEmpty() && !presence.mcUuid.equals(known.mcUuid)) {
+                known.mcUuid = presence.mcUuid;
+                changed = true;
+            }
+            if (changed) {
+                saveFriends();
+            }
+        }
         JsonElement allow = room.get("allow");
         if (allow != null && allow.isJsonArray()) {
             for (JsonElement element : allow.getAsJsonArray()) {
@@ -434,6 +482,8 @@ public final class NetPlayerClient {
             Toasts.info(Component.translatable("netplayer.title"), Component.translatable("netplayer.error.no_world"));
             return;
         }
+        restoreAuth = server.usesAuthentication();
+        server.setUsesAuthentication(config.verifyPremium);
         int port = server.isPublished() ? server.getPort() : freePort();
         if (!server.isPublished() && !server.publishServer(gameType, allowCheats, port)) {
             Toasts.info(Component.translatable("netplayer.title"), Component.translatable("netplayer.error.lan_failed"));
@@ -488,6 +538,10 @@ public final class NetPlayerClient {
         directPending = null;
         if (pending != null) {
             pending.close();
+        }
+        IntegratedServer server = mc.getSingleplayerServer();
+        if (server != null && server.isPublished()) {
+            server.setUsesAuthentication(restoreAuth);
         }
         if (announce && room != null) {
             send(Msg.of("room_close").put("room", room.id()));
@@ -692,7 +746,7 @@ public final class NetPlayerClient {
                 if (state.controlling) {
                     Tunnel tunnel = Tunnel.guest(state.link, key);
                     tunnel.start();
-                    tunnels.put("guest-" + from.id, tunnel);
+                    tunnels.put(from.id, tunnel);
                     JoinFlow flow = joinFlow;
                     if (flow != null) {
                         flow.port = tunnel.localPort();
@@ -787,6 +841,14 @@ public final class NetPlayerClient {
         init();
         config.verifyPremium = value;
         config.save(configFile);
+        Room room = hosting;
+        IntegratedServer server = mc.getSingleplayerServer();
+        if (room != null && server != null) {
+            server.setUsesAuthentication(value);
+            hosting = new Room(room.id(), room.world(), room.token(), room.allow(), room.port(), value);
+            sendRoomOpen();
+            updatePresence();
+        }
     }
 
     public String lastDirectOffer() {
@@ -894,7 +956,7 @@ public final class NetPlayerClient {
                 SecretKeySpec key = Crypto.agree(state.ephemeral.getPrivate(), Crypto.xPublic(epk));
                 Tunnel tunnel = Tunnel.guest(state.link, key);
                 tunnel.start();
-                tunnels.put("guest-direct", tunnel);
+                tunnels.put(host.id, tunnel);
                 flow.port = tunnel.localPort();
             } catch (Exception e) {
                 iceFailed(state);
@@ -943,6 +1005,61 @@ public final class NetPlayerClient {
     private static String directSigned(String kind, String roomId, JsonObject ice, String epk) {
         return "direct-" + kind + ":" + roomId + ":" + Json.str(ice, "ufrag") + ":" + Json.str(ice, "pwd")
                 + ":" + epk;
+    }
+
+    // ------------------------------------------------------------------ settings and link info
+
+    public record LinkInfo(boolean active, String kind, int rttMillis, String local, String remote) {
+        public static final LinkInfo NONE = new LinkInfo(false, "", -1, "", "");
+    }
+
+    public LinkInfo linkInfo(String friendId) {
+        Tunnel tunnel = tunnels.get(friendId);
+        IceState state = icePeers.get(friendId);
+        if (tunnel == null || state == null) {
+            return LinkInfo.NONE;
+        }
+        IceLink.PairInfo pair = state.link.pairInfo();
+        return new LinkInfo(true, pair.kind(), tunnel.rttMillis(), pair.local(), pair.remote());
+    }
+
+    public String signalingHost() {
+        init();
+        return config.signalingHost;
+    }
+
+    public int signalingPort() {
+        init();
+        return config.signalingPort;
+    }
+
+    public String stunServersText() {
+        init();
+        return String.join(", ", config.stunServers);
+    }
+
+    public void applySettings(String host, int port, String stunCsv) {
+        init();
+        config.signalingHost = host.isBlank() ? "127.0.0.1" : host.strip();
+        config.signalingPort = port <= 0 || port > 65535 ? 25566 : port;
+        List<String> servers = new ArrayList<>();
+        for (String part : stunCsv.split("[,;\s]+")) {
+            if (!part.isBlank()) {
+                servers.add(part.strip());
+            }
+        }
+        if (!servers.isEmpty()) {
+            config.stunServers = servers;
+        }
+        config.save(configFile);
+        SignalClient old = signal;
+        signal = null;
+        helloDone = false;
+        sentPresence = "";
+        lastConnectAttempt = 0L;
+        if (old != null) {
+            old.close();
+        }
     }
 
     // ------------------------------------------------------------------ premium accounts

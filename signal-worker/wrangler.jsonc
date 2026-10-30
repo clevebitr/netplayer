@@ -1,0 +1,24 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "netplayer-signal",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-09-01",
+  // Durable Objects on the Workers Free plan must use the SQLite storage backend.
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["SignalRoom"]
+    }
+  ],
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "SIGNAL",
+        "class_name": "SignalRoom"
+      }
+    ]
+  },
+  "observability": {
+    "enabled": true
+  }
+}

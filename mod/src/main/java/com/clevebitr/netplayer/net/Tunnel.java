@@ -149,9 +149,19 @@ public final class Tunnel implements AutoCloseable {
         });
     }
 
+    public int rttMillis() {
+        return stream.rttMillis();
+    }
+
     private void tickLoop() {
+        long lastPing = 0L;
         while (!closed) {
             stream.tick();
+            long now = System.currentTimeMillis();
+            if (now - lastPing > 2000L) {
+                lastPing = now;
+                stream.ping();
+            }
             try {
                 Thread.sleep(50L);
             } catch (InterruptedException e) {

@@ -5,6 +5,8 @@ import com.clevebitr.netplayer.core.Profile;
 public final class Friend {
     public final Profile profile;
     public String note = "";
+    public String mcName = "";
+    public String mcUuid = "";
     public long addedAt = System.currentTimeMillis();
 
     public Friend(Profile profile) {

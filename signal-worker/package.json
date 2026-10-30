@@ -1,0 +1,19 @@
+{
+  "name": "netplayer-signal",
+  "version": "0.1.0",
+  "private": true,
+  "description": "NetPlayer signaling server as a Cloudflare Worker + Durable Object",
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "typecheck": "tsc --noEmit",
+    "tail": "wrangler tail",
+    "smoke": "node test/smoke.mjs"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20261023.1",
+    "typescript": "^5.6.0",
+    "wrangler": "^4.0.0"
+  }
+}

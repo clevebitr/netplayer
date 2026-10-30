@@ -50,6 +50,13 @@ public final class OpenWorldScreen extends Screen {
                     .tooltip(Tooltip.create(Component.translatable("netplayer.open.direct_tip")))
                     .build());
 
+            addRenderableWidget(Button.builder(premiumLabel(), b -> {
+                client.setVerifyPremium(!client.verifyPremium());
+                b.setMessage(premiumLabel());
+            }).bounds(left, 108, 310, 20)
+                    .tooltip(Tooltip.create(Component.translatable("netplayer.open.premium_tip")))
+                    .build());
+
             addRenderableWidget(Button.builder(Component.translatable("netplayer.button.copy_direct"), b -> {
                 String code = client.lastDirectOffer();
                 if (code.isEmpty()) {
@@ -143,11 +150,11 @@ public final class OpenWorldScreen extends Screen {
         if (client.hosting()) {
             graphics.drawCenteredString(font, Component.translatable("netplayer.open.is_open",
                     client.room().world()), width / 2, 36, 0x55FF55);
-            graphics.drawString(font, Component.translatable("netplayer.open.direct_line1"), left, 112, 0xA0A0A0, false);
-            graphics.drawString(font, Component.translatable("netplayer.open.direct_line2"), left, 124, 0xA0A0A0, false);
-            graphics.drawString(font, Component.translatable("netplayer.open.direct_line3"), left, 136, 0xA0A0A0, false);
+            graphics.drawString(font, Component.translatable("netplayer.open.direct_line1"), left, 134, 0xA0A0A0, false);
+            graphics.drawString(font, Component.translatable("netplayer.open.direct_line2"), left, 146, 0xA0A0A0, false);
+            graphics.drawString(font, Component.translatable("netplayer.open.direct_line3"), left, 158, 0xA0A0A0, false);
             graphics.drawString(font, Component.translatable(client.room().premium()
-                    ? "netplayer.open.premium_on" : "netplayer.open.premium_off"), left, 154, 0x80C0FF, false);
+                    ? "netplayer.open.premium_on" : "netplayer.open.premium_off"), left, 176, 0x80C0FF, false);
         } else if (!note.getString().isEmpty()) {
             graphics.drawCenteredString(font, note, width / 2, 40, 0xFFAA00);
         }
