@@ -1,0 +1,25 @@
+plugins {
+    id 'application'
+}
+
+application {
+    mainClass = 'com.clevebitr.netplayer.server.SignalServerMain'
+}
+
+dependencies {
+    implementation project(':core')
+    implementation 'com.google.code.gson:gson:2.11.0'
+}
+
+tasks.named('jar', Jar) {
+    archiveFileName = 'netplayer-server.jar'
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+    manifest {
+        attributes 'Main-Class': application.mainClass.get()
+    }
+    from({ configurations.runtimeClasspath.collect { it.isDirectory() ? it : zipTree(it) } }) {
+        exclude 'META-INF/MANIFEST.MF'
+        exclude 'META-INF/*.SF', 'META-INF/*.DSA', 'META-INF/*.RSA'
+        exclude 'module-info.class'
+    }
+}

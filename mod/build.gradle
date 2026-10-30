@@ -1,0 +1,48 @@
+plugins {
+    id 'net.neoforged.moddev' version '2.0.148'
+}
+
+base {
+    archivesName = 'netplayer'
+}
+
+neoForge {
+    version = project.neo_version
+
+    runs {
+        client {
+            client()
+        }
+        server {
+            server()
+            programArgument '--nogui'
+        }
+    }
+
+    mods {
+        "${mod_id}" {
+            sourceSet(sourceSets.main)
+        }
+    }
+}
+
+configurations {
+    embedded
+}
+
+dependencies {
+    implementation project(':core')
+    implementation 'org.jitsi:ice4j:3.2-22-gcb4d152'
+
+    embedded project(':core')
+    embedded 'org.jitsi:ice4j:3.2-22-gcb4d152'
+}
+
+tasks.named('jar', Jar) {
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+    from({ configurations.embedded.collect { it.isDirectory() ? it : zipTree(it) } }) {
+        exclude 'META-INF/MANIFEST.MF'
+        exclude 'META-INF/*.SF', 'META-INF/*.DSA', 'META-INF/*.RSA'
+        exclude 'module-info.class', 'META-INF/versions/*/module-info.class'
+    }
+}
