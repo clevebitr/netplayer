@@ -6,6 +6,7 @@ import com.clevebitr.netplayer.core.Identity;
 import com.clevebitr.netplayer.core.Invite;
 import com.clevebitr.netplayer.core.Json;
 import com.clevebitr.netplayer.core.Msg;
+import com.clevebitr.netplayer.core.PremiumAuth;
 import com.clevebitr.netplayer.core.Profile;
 import com.clevebitr.netplayer.core.SignalClient;
 import com.clevebitr.netplayer.net.IceLink;
@@ -15,6 +16,7 @@ import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.mojang.logging.LogUtils;
 import net.minecraft.client.Minecraft;
+import net.minecraft.client.User;
 import net.minecraft.client.gui.screens.ConnectScreen;
 import net.minecraft.client.gui.screens.TitleScreen;
 import net.minecraft.client.multiplayer.ServerData;
@@ -55,10 +57,10 @@ public final class NetPlayerClient {
         return instance;
     }
 
-    public record Room(String id, String world, String token, Set<String> allow, int port) {
+    public record Room(String id, String world, String token, Set<String> allow, int port, boolean premium) {
     }
 
-    public record Pending(Profile guest, String room, String world, long at) {
+    public record Pending(Profile guest, String room, String world, long at, JsonObject proof) {
     }
 
     private final Minecraft mc;
@@ -197,7 +199,7 @@ public final class NetPlayerClient {
             return "";
         }
         return Invite.roomKey(new Invite.Room(room.id(), me(), room.world(), room.token(),
-                System.currentTimeMillis() + 6L * 60L * 60L * 1000L));
+                System.currentTimeMillis() + 6L * 60L * 60L * 1000L, room.premium()));
     }
 
     public List<Friend> friends() {
@@ -242,7 +244,7 @@ public final class NetPlayerClient {
             }
             Invite.Room room = Invite.parseRoomKey(text);
             storeFriend(room.host());
-            requestJoin(room.host().id, room.roomId(), room.token());
+            requestJoin(room.host().id, room.roomId(), room.token(), room.premium());
             return null;
         } catch (Exception e) {
             return "netplayer.error.bad_key";
@@ -338,6 +340,7 @@ public final class NetPlayerClient {
         JsonObject room = msg.obj("room");
         presence.roomId = Json.str(room, "id");
         presence.world = Json.str(room, "world");
+        presence.premium = Json.bool(room, "premium");
         JsonElement allow = room.get("allow");
         if (allow != null && allow.isJsonArray()) {
             for (JsonElement element : allow.getAsJsonArray()) {
@@ -389,7 +392,8 @@ public final class NetPlayerClient {
             }
             case "join_req" -> {
                 Profile guest = Profile.fromJson(msg.obj("guest"));
-                pendingJoins.add(new Pending(guest, msg.str("room"), msg.str("world"), System.currentTimeMillis()));
+                pendingJoins.add(new Pending(guest, msg.str("room"), msg.str("world"), System.currentTimeMillis(),
+                        msg.obj("mc")));
                 LOG.info("join request from {} ({})", guest.shortName(), guest.id);
                 Toasts.info(Component.literal(guest.shortName()),
                         Component.translatable("netplayer.toast.join_request"));
@@ -441,7 +445,8 @@ public final class NetPlayerClient {
         } else {
             allow.addAll(allowed);
         }
-        hosting = new Room(Bytes.hex(Bytes.random(8)), worldName(server), Bytes.hex(Bytes.random(8)), allow, port);
+        hosting = new Room(Bytes.hex(Bytes.random(8)), worldName(server), Bytes.hex(Bytes.random(8)), allow, port,
+                config.verifyPremium);
         sendRoomOpen();
         updatePresence();
         Toasts.info(Component.translatable("netplayer.title"), Component.translatable("netplayer.toast.world_open"));
@@ -456,6 +461,7 @@ public final class NetPlayerClient {
         payload.addProperty("id", room.id());
         payload.addProperty("world", room.world());
         payload.addProperty("token", room.token());
+        payload.addProperty("premium", room.premium());
         JsonArray allow = new JsonArray();
         room.allow().forEach(allow::add);
         payload.add("allow", allow);
@@ -507,23 +513,41 @@ public final class NetPlayerClient {
     public void requestJoin(String friendId) {
         Presence presence = presence(friendId);
         if (!presence.openTo(me().id)) {
-            Toasts.info(Component.translatable("netplayer.title"), Component.translatable("netplayer.error.not_open"));
+            notify("netplayer.error.not_open");
             return;
         }
-        requestJoin(friendId, presence.roomId, "");
+        requestJoin(friendId, presence.roomId, "", presence.premium);
     }
 
-    private void requestJoin(String hostId, String roomId, String token) {
+    private void requestJoin(String hostId, String roomId, String token, boolean needPremium) {
         if (!signalReachable()) {
-            Toasts.info(Component.translatable("netplayer.title"), Component.translatable("netplayer.error.offline"));
+            notify("netplayer.error.offline");
             return;
         }
-        Msg msg = Msg.of("join_req").put("room", roomId).put("host", hostId);
-        if (token != null && !token.isEmpty()) {
-            msg.put("token", token);
+        if (needPremium && !localPremiumCapable()) {
+            notify("netplayer.error.not_premium_local");
+            return;
         }
-        send(msg);
-        Toasts.info(Component.translatable("netplayer.title"), Component.translatable("netplayer.toast.request_sent"));
+        Thread.ofVirtual().name("netplayer-join").start(() -> {
+            JsonObject proof = Json.obj();
+            if (needPremium) {
+                JsonObject made = premiumProof();
+                if (made == null) {
+                    notify("netplayer.error.not_premium");
+                    return;
+                }
+                proof = made;
+            }
+            Msg msg = Msg.of("join_req").put("room", roomId).put("host", hostId);
+            if (token != null && !token.isEmpty()) {
+                msg.put("token", token);
+            }
+            if (proof.size() > 0) {
+                msg.put("mc", proof);
+            }
+            send(msg);
+            notify("netplayer.toast.request_sent");
+        });
     }
 
     public void answerJoin(Pending pending, boolean accept) {
@@ -532,10 +556,30 @@ public final class NetPlayerClient {
         if (room == null) {
             return;
         }
-        send(Msg.of("join_ans").put("to", pending.guest().id).put("room", room.id()).put("accept", accept));
-        if (accept) {
-            startIce(pending.guest(), room.id(), false, room.port());
+        if (!accept) {
+            send(Msg.of("join_ans").put("to", pending.guest().id).put("room", room.id()).put("accept", false)
+                    .put("reason", "declined"));
+            return;
         }
+        if (!config.verifyPremium) {
+            acceptGuest(pending, room);
+            return;
+        }
+        Thread.ofVirtual().name("netplayer-premium-check").start(() -> {
+            if (!verifyProof(pending.proof())) {
+                send(Msg.of("join_ans").put("to", pending.guest().id).put("room", room.id()).put("accept", false)
+                        .put("reason", "not_premium"));
+                Toasts.info(Component.literal(pending.guest().shortName()),
+                        Component.translatable("netplayer.error.guest_not_premium"));
+                return;
+            }
+            acceptGuest(pending, room);
+        });
+    }
+
+    private void acceptGuest(Pending pending, Room room) {
+        send(Msg.of("join_ans").put("to", pending.guest().id).put("room", room.id()).put("accept", true));
+        startIce(pending.guest(), room.id(), false, room.port());
     }
 
     private void onJoinAnswer(Msg msg) {
@@ -544,6 +588,7 @@ public final class NetPlayerClient {
             failJoin(switch (reason) {
                 case "not_allowed" -> "netplayer.error.not_allowed";
                 case "host_offline" -> "netplayer.error.host_offline";
+                case "not_premium" -> "netplayer.error.not_premium";
                 default -> "netplayer.error.room_closed";
             });
             return;
@@ -709,11 +754,13 @@ public final class NetPlayerClient {
                 payload.addProperty("room", room.id());
                 payload.addProperty("world", room.world());
                 payload.addProperty("token", room.token());
+        payload.addProperty("premium", room.premium());
                 payload.addProperty("port", room.port());
                 payload.add("host", me().toJson());
                 JsonArray allow = new JsonArray();
                 room.allow().forEach(allow::add);
                 payload.add("allow", allow);
+                payload.addProperty("premium", config.verifyPremium);
                 payload.add("ice", ice);
                 payload.addProperty("epk", epk);
                 payload.addProperty("sig", Bytes.b64(identity.sign(directSigned("offer", room.id(), ice, epk)
@@ -729,6 +776,17 @@ public final class NetPlayerClient {
                 iceFailed(state);
             }
         });
+    }
+
+    public boolean verifyPremium() {
+        init();
+        return config.verifyPremium;
+    }
+
+    public void setVerifyPremium(boolean value) {
+        init();
+        config.verifyPremium = value;
+        config.save(configFile);
     }
 
     public String lastDirectOffer() {
@@ -780,6 +838,10 @@ public final class NetPlayerClient {
         if (!allowed) {
             return "netplayer.error.not_allowed";
         }
+        boolean needPremium = Json.bool(payload, "premium");
+        if (needPremium && !localPremiumCapable()) {
+            return "netplayer.error.not_premium_local";
+        }
         storeFriend(host);
         JoinFlow flow = new JoinFlow(host, roomId, Json.str(payload, "world"));
         joinFlow = flow;
@@ -796,10 +858,23 @@ public final class NetPlayerClient {
                 icePeers.put(host.id, state);
                 JsonObject mine = link.localDescription();
                 String myEpk = Bytes.b64(ephemeral.getPublic().getEncoded());
+                JsonObject proof = Json.obj();
+                if (needPremium) {
+                    JsonObject made = premiumProof();
+                    if (made == null) {
+                        notify("netplayer.error.not_premium");
+                        iceFailed(state);
+                        return;
+                    }
+                    proof = made;
+                }
                 JsonObject answer = Json.obj();
                 answer.addProperty("v", 1);
                 answer.addProperty("room", roomId);
                 answer.add("guest", me().toJson());
+                if (proof.size() > 0) {
+                    answer.add("mc", proof);
+                }
                 answer.add("ice", mine);
                 answer.addProperty("epk", myEpk);
                 answer.addProperty("sig", Bytes.b64(identity.sign(directSigned("answer", roomId, mine, myEpk)
@@ -836,6 +911,9 @@ public final class NetPlayerClient {
         if (!Crypto.verify(guest, directSigned("answer", roomId, ice, epk), Json.str(payload, "sig"))) {
             return "netplayer.error.bad_signature";
         }
+        if (config.verifyPremium && !verifyProof(Json.sub(payload, "mc"))) {
+            return "netplayer.error.guest_not_premium";
+        }
         Room room = hosting;
         IceState state = directPending;
         if (room == null || state == null || !room.id().equals(roomId)) {
@@ -865,6 +943,56 @@ public final class NetPlayerClient {
     private static String directSigned(String kind, String roomId, JsonObject ice, String epk) {
         return "direct-" + kind + ":" + roomId + ":" + Json.str(ice, "ufrag") + ":" + Json.str(ice, "pwd")
                 + ":" + epk;
+    }
+
+    // ------------------------------------------------------------------ premium accounts
+
+    /** True when this install has a real Mojang session (dev clients use the placeholder token). */
+    public boolean localPremiumCapable() {
+        User user = mc.getUser();
+        if (user == null) {
+            return false;
+        }
+        String token = user.getAccessToken();
+        return token != null && !token.isBlank() && !"0".equals(token);
+    }
+
+    /** Registers the session with Mojang and returns the proof the host can verify. */
+    private JsonObject premiumProof() {
+        try {
+            User user = mc.getUser();
+            if (user == null) {
+                return null;
+            }
+            String profileId = user.getProfileId() == null ? "" : user.getProfileId().toString();
+            String serverId = PremiumAuth.newServerId();
+            if (!PremiumAuth.join(user.getAccessToken(), profileId, serverId)) {
+                return null;
+            }
+            JsonObject proof = Json.obj();
+            proof.addProperty("name", user.getName());
+            proof.addProperty("uuid", profileId);
+            proof.addProperty("serverId", serverId);
+            return proof;
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    private boolean verifyProof(JsonObject proof) {
+        if (proof == null || proof.size() == 0) {
+            LOG.warn("premium check rejected: guest sent no proof");
+            return false;
+        }
+        String name = Json.str(proof, "name");
+        JsonObject profile = PremiumAuth.hasJoined(name, Json.str(proof, "serverId"));
+        boolean ok = profile != null && !Json.str(profile, "id").isEmpty();
+        LOG.info("premium check for {} -> {}", name, ok ? "ok" : "failed");
+        return ok;
+    }
+
+    private void notify(String key) {
+        Toasts.info(Component.translatable("netplayer.title"), Component.translatable(key));
     }
 
     // ------------------------------------------------------------------ helpers

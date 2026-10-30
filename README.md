@@ -72,11 +72,19 @@ Both the host and the guest need the mod. A dedicated server does **not**.
 {
   "signalingHost": "127.0.0.1",
   "signalingPort": 25566,
-  "stunServers": ["stun.miwifi.com:3478", "stun.chat.bilibili.com:3478"]
+  "stunServers": ["stun.miwifi.com:3478", "stun.chat.bilibili.com:3478"],
+  "iceDebug": false,
+  "verifyPremium": true
 }
 ```
 
 Point `signalingHost` / `signalingPort` at your own signaling server if you run one.
+
+`verifyPremium` (default `true`) makes the host check the guest against Mojang's session server
+(`session/minecraft/join` + `hasJoined`), the same two calls an online-mode server does, so only
+genuine accounts can join. It can be toggled per world in **Open to Friends**, and it needs access
+to `sessionserver.mojang.com` on both sides. Development clients use an offline token, so keep it
+off while testing in the IDE.
 
 ## Running the signaling server
 
@@ -116,6 +124,8 @@ systemProp.https.proxyPort=7890
 
 ## Limitations
 
+- Premium check only gates the tunnel; the host world still runs in offline mode, so in-game
+  identities stay name based (a real online-mode integrated server would break LAN play).
 - No TURN relay in 0.1: symmetric NAT or carrier grade NAT pairs will fail, the mod tells you
   instead of silently hanging. IPv6 (both peers with a global address) or an open UDP port works.
 - One Minecraft connection per tunnel; the guest side uses a random loopback port.

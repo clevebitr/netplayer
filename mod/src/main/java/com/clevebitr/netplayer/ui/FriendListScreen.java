@@ -161,8 +161,10 @@ public final class FriendListScreen extends Screen {
             return Component.translatable("netplayer.status.offline");
         }
         if (presence.hosting()) {
-            return Component.translatable(presence.openTo(client.me().id)
+            Component base = Component.translatable(presence.openTo(client.me().id)
                     ? "netplayer.status.hosting_open" : "netplayer.status.hosting", presence.world);
+            return presence.premium ? base.copy().append(" ")
+                    .append(Component.translatable("netplayer.tag.premium")) : base;
         }
         return switch (presence.state) {
             case "playing", "hosting" -> Component.translatable("netplayer.status.playing", presence.detail);

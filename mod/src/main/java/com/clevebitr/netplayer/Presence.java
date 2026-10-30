@@ -9,6 +9,7 @@ public final class Presence {
     public String detail;
     public String roomId;
     public String world;
+    public boolean premium;
     public Set<String> allow = new HashSet<>();
 
     public Presence(String id, String state, String detail) {

@@ -17,7 +17,7 @@ public final class Invite {
     private Invite() {
     }
 
-    public record Room(String roomId, Profile host, String world, String token, long expires) {
+    public record Room(String roomId, Profile host, String world, String token, long expires, boolean premium) {
         public JsonObject toJson() {
             JsonObject o = Json.obj();
             o.addProperty("room", roomId);
@@ -25,12 +25,13 @@ public final class Invite {
             o.addProperty("world", world);
             o.addProperty("token", token);
             o.addProperty("expires", expires);
+            o.addProperty("premium", premium);
             return o;
         }
 
         public static Room fromJson(JsonObject o) {
             return new Room(Json.str(o, "room"), Profile.fromJson(Json.sub(o, "host")), Json.str(o, "world"),
-                    Json.str(o, "token"), Json.num(o, "expires"));
+                    Json.str(o, "token"), Json.num(o, "expires"), Json.bool(o, "premium"));
         }
     }
 

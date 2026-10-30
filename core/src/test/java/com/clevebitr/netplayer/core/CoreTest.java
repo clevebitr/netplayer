@@ -28,12 +28,13 @@ class CoreTest {
     @Test
     void roomKeyRoundTrip() {
         Identity host = Identity.create("Host");
-        Invite.Room room = new Invite.Room("room-1", host.profile, "My World", "token", 42L);
+        Invite.Room room = new Invite.Room("room-1", host.profile, "My World", "token", 42L, true);
         Invite.Room parsed = Invite.parseRoomKey(Invite.roomKey(room));
         assertEquals("room-1", parsed.roomId());
         assertEquals("My World", parsed.world());
         assertEquals("token", parsed.token());
         assertEquals(host.profile.id, parsed.host().id);
+        assertEquals(true, parsed.premium());
     }
 
     @Test

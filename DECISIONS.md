@@ -22,3 +22,11 @@
 构建：Gradle 8.14.5（腾讯镜像 dist）+ ModDevGradle 2.0.148 + NeoForge 21.11.48，Java toolchain 21。本机 maven.neoforged.net 被墙，靠 ~/.gradle/gradle.properties 里的 systemProp.* 指向 127.0.0.1:7890 代理。jar 用 jar 任务手动 fat-jar（duplicatesStrategy=EXCLUDE），不用 shadow 插件；:core 用 gson compileOnly，:server 自带 gson。
 
 依赖体积：ice4j 会拉 jitsi-utils/jicoco-config/kotlin-stdlib/JNA/Jackson，fat jar 约 12MB。不裁剪的原因是 AgentConfig（Kotlin）在 Agent 构造时就会初始化。
+
+## 2026-10-30 — 回环 IPv4 坑 + 无信令直连模式
+
+1) 进不去世界的真因：Tunnel.guest() 用 InetAddress.getLoopbackAddress() 绑 ServerSocket，Windows/JDK21 下拿到的是 ::1，而 ConnectScreen 连的是字面量 127.0.0.1 → Connection refused（日志里能看到 netty AnnotatedConnectException）。改成显式 127.0.0.1，主机侧连 LAN 端口同样用 127.0.0.1。以后凡是本地回环都用字面量，不依赖 getLoopbackAddress()。
+
+2) 无信令（纯 P2P 信令）模式：房主在自己已 publishServer 的世界上生成 npair1 直连码（内含 host profile/room/world/port/allow + ice{ufrag,pwd,cands} + 临时 X25519 公钥 + Ed25519 签名 "direct-offer:room:ufrag:pwd:epk"），通过任意聊天发给好友；好友粘贴后生成 npans1 应答码（同样的签名格式 "direct-answer:..."），房主再粘回应答码。两侧复用同一套 IceLink/Tunnel/JoinFlow：房主不 controlling、好友 controlling，好友 ICE 通过后开 127.0.0.1 端口并走既有 progressJoin 连进世界。码长约 1.6KB（base64url + 8 位校验）。一次性：重新生成会让旧应答码失效（room 不匹配 → direct_stale）。白名单仍生效。
+
+3) 直连测试脚本验证：offer/answer 码往返 + 1.5s 人为延迟（模拟粘贴时间）+ ICE 完成 + 128KiB 回显 57ms，说明"房主后粘贴应答码"这条时序 OK（ice4j 会把先到的检查放进 preDiscoveredPairsQueue）。

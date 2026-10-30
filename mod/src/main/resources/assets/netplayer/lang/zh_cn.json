@@ -84,5 +84,14 @@
   "netplayer.open.direct_line2": "好友在「好友 → 添加好友」里粘贴，得到应答码。",
   "netplayer.open.direct_line3": "把应答码粘回同一个界面，对方就能进来。",
   "netplayer.open.generating": "正在生成直连码，生成后自动复制",
-  "netplayer.open.no_direct": "还没有直连码，先点「生成直连码」"
+  "netplayer.open.no_direct": "还没有直连码，先点「生成直连码」",
+  "netplayer.open.premium": "正版验证：%s",
+  "netplayer.open.premium_tip": "只允许正版账号进入，需要能访问 sessionserver.mojang.com",
+  "netplayer.open.premium_on": "本世界已开启正版验证",
+  "netplayer.open.premium_off": "本世界未开启正版验证",
+  "netplayer.open.local_not_premium": "本机账号无法通过正版验证（开发/离线账号），开着验证时好友进不来",
+  "netplayer.tag.premium": "[正版]",
+  "netplayer.error.not_premium": "需要正版账号：会话验证失败",
+  "netplayer.error.not_premium_local": "本机账号无法通过正版验证（开发/离线账号）",
+  "netplayer.error.guest_not_premium": "已拒绝：对方未通过正版验证"
 }

@@ -41,7 +41,8 @@ public final class SignalServer implements AutoCloseable {
         this.port = port;
     }
 
-    private record Room(String id, String host, String world, String token, Set<String> allow, long opened) {
+    private record Room(String id, String host, String world, String token, Set<String> allow, boolean premium,
+                        long opened) {
     }
 
     private record Pending(long at, JsonObject profile) {
@@ -192,7 +193,7 @@ public final class SignalServer implements AutoCloseable {
             allow.add("*");
         }
         rooms.put(id, new Room(id, session.id, Json.str(room, "world"), Json.str(room, "token"), allow,
-                System.currentTimeMillis()));
+                Json.bool(room, "premium"), System.currentTimeMillis()));
         session.roomId = id;
         broadcastPresence(session.id);
     }
@@ -239,7 +240,8 @@ public final class SignalServer implements AutoCloseable {
             return;
         }
         send(host, Msg.of("join_req").put("room", room.id()).put("world", room.world())
-                .put("ticket", tickets.incrementAndGet()).put("guest", session.profile));
+                .put("ticket", tickets.incrementAndGet()).put("guest", session.profile)
+                .put("mc", msg.obj("mc")));
     }
 
     private synchronized void joinAnswer(Session session, Msg msg) {
@@ -333,6 +335,7 @@ public final class SignalServer implements AutoCloseable {
             roomJson.addProperty("id", room.id());
             roomJson.addProperty("world", room.world());
             roomJson.addProperty("host", room.host());
+            roomJson.addProperty("premium", room.premium());
             roomJson.add("allow", allow);
             msg.put("room", roomJson);
         }

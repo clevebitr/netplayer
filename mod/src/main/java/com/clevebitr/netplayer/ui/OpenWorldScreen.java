@@ -77,8 +77,15 @@ public final class OpenWorldScreen extends Screen {
                 b.setMessage(allLabel());
             }).bounds(left, 72, 310, 20).build());
 
+            addRenderableWidget(Button.builder(premiumLabel(), b -> {
+                client.setVerifyPremium(!client.verifyPremium());
+                b.setMessage(premiumLabel());
+            }).bounds(left, 94, 310, 20)
+                    .tooltip(Tooltip.create(Component.translatable("netplayer.open.premium_tip")))
+                    .build());
+
             List<Friend> friends = client.friends();
-            int y = 98;
+            int y = 120;
             for (int i = 0; i < Math.min(friends.size(), 4); i++) {
                 Friend friend = friends.get(i);
                 String id = friend.profile.id;
@@ -119,6 +126,11 @@ public final class OpenWorldScreen extends Screen {
                 Component.translatable(everyone ? "netplayer.value.on" : "netplayer.value.off"));
     }
 
+    private Component premiumLabel() {
+        return Component.translatable("netplayer.open.premium",
+                Component.translatable(client.verifyPremium() ? "netplayer.value.on" : "netplayer.value.off"));
+    }
+
     private Component rowLabel(Friend friend) {
         return Component.literal((allowed.contains(friend.profile.id) ? "[x] " : "[ ] ") + friend.label());
     }
@@ -134,8 +146,14 @@ public final class OpenWorldScreen extends Screen {
             graphics.drawString(font, Component.translatable("netplayer.open.direct_line1"), left, 112, 0xA0A0A0, false);
             graphics.drawString(font, Component.translatable("netplayer.open.direct_line2"), left, 124, 0xA0A0A0, false);
             graphics.drawString(font, Component.translatable("netplayer.open.direct_line3"), left, 136, 0xA0A0A0, false);
+            graphics.drawString(font, Component.translatable(client.room().premium()
+                    ? "netplayer.open.premium_on" : "netplayer.open.premium_off"), left, 154, 0x80C0FF, false);
         } else if (!note.getString().isEmpty()) {
             graphics.drawCenteredString(font, note, width / 2, 40, 0xFFAA00);
+        }
+        if (!client.localPremiumCapable()) {
+            graphics.drawString(font, Component.translatable("netplayer.open.local_not_premium"),
+                    left, 218, 0xFF8855, false);
         }
         if (!note.getString().isEmpty() && client.hosting()) {
             graphics.drawCenteredString(font, note, width / 2, height - 70, 0xFFAA00);

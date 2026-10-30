@@ -24,6 +24,7 @@ java -jar server/build/libs/netplayer-server.jar --port 25566
 | 1 | 两个窗口都启动后看控制台 | 每个窗口出现 `connected to signaling server` 与 `signaling handshake done as Dev/Friend` |
 | 2 | A 点主菜单左下 **好友** → **添加好友** → **复制我的密钥** | 剪贴板里得到 `npfriend1....` |
 | 3 | B 点 **好友** → **添加好友**，粘贴 → **添加** | B 列表出现 Dev；A 右上角弹 toast `Dev 把你加为了好友`（实际是 B 加了 A，A 反向收到并自动互为好友） |
+| 3.5 | A 的 **对好友开放** 界面里看「正版验证」开关 | 默认是**开**；两个开发窗口都是离线账号，测试时先把它**关掉**，否则好友会被拒 |
 | 4 | A 进单人世界（随便新建）→ `Esc` → 左下 **对好友开放** → 全部好友：开 → **开放世界** | toast `世界已对好友开放`；B 的好友列表里 Dev 置顶，状态 `开放中 xxx（对你开放）` |
 | 5 | B 点 Dev 那一行 | toast `已发送加入申请`；A 弹 toast `Friend 请求加入你的世界` |
 | 6 | A 打开好友列表（`Esc` → **好友** 或 `F9`） | 列表顶部出现 `Friend 请求加入 [同意] [拒绝]` |

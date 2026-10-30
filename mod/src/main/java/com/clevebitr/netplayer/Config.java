@@ -13,6 +13,7 @@ public final class Config {
     public List<String> stunServers = new ArrayList<>(
             List.of("stun.miwifi.com:3478", "stun.chat.bilibili.com:3478"));
     public boolean iceDebug = false;
+    public boolean verifyPremium = true;
 
     public static Config load(Path file) {
         if (Files.isRegularFile(file)) {

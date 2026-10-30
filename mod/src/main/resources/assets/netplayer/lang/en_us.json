@@ -84,5 +84,14 @@
   "netplayer.open.direct_line2": "Your friend pastes it under Friends -> Add Friend and gets a reply code.",
   "netplayer.open.direct_line3": "Paste that reply code into the same screen to let them in.",
   "netplayer.open.generating": "Generating direct code, it will be copied when ready",
-  "netplayer.open.no_direct": "No direct code yet, press Make Direct Code first"
+  "netplayer.open.no_direct": "No direct code yet, press Make Direct Code first",
+  "netplayer.open.premium": "Premium check: %s",
+  "netplayer.open.premium_tip": "Only Mojang accounts can join. Needs access to sessionserver.mojang.com.",
+  "netplayer.open.premium_on": "Premium check is ON for this world",
+  "netplayer.open.premium_off": "Premium check is OFF for this world",
+  "netplayer.open.local_not_premium": "This account cannot pass the premium check (dev/offline). Turn it off or friends cannot join.",
+  "netplayer.tag.premium": "[premium]",
+  "netplayer.error.not_premium": "Premium account required: session check failed",
+  "netplayer.error.not_premium_local": "This account cannot pass the premium check (dev/offline)",
+  "netplayer.error.guest_not_premium": "Rejected: the guest did not pass the premium check"
 }
