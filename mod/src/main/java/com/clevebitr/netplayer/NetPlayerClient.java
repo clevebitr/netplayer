@@ -2,6 +2,7 @@ package com.clevebitr.netplayer;
 
 import com.clevebitr.netplayer.core.Bytes;
 import com.clevebitr.netplayer.core.Crypto;
+import com.clevebitr.netplayer.core.Handshake;
 import com.clevebitr.netplayer.core.Identity;
 import com.clevebitr.netplayer.core.Invite;
 import com.clevebitr.netplayer.core.Json;
@@ -48,6 +49,8 @@ import org.slf4j.Logger;
  */
 public final class NetPlayerClient {
     private static final Logger LOG = LogUtils.getLogger();
+    /** Bound the request queues: a flood must not be able to grow them without limit. */
+    private static final int MAX_REQUESTS = 8;
     private static NetPlayerClient instance;
 
     public static synchronized NetPlayerClient get() {
@@ -60,7 +63,7 @@ public final class NetPlayerClient {
     public record Room(String id, String world, String token, Set<String> allow, int port, boolean premium) {
     }
 
-    public record Pending(Profile guest, String room, String world, long at, JsonObject proof) {
+    public record Pending(Profile guest, String room, String world, long at, JsonObject proof, String token) {
     }
 
     private final Minecraft mc;
@@ -72,6 +75,8 @@ public final class NetPlayerClient {
     private final Map<String, Friend> friends = new ConcurrentHashMap<>();
     private final Map<String, Presence> presences = new ConcurrentHashMap<>();
     private final List<Pending> pendingJoins = new CopyOnWriteArrayList<>();
+    /** Friend requests that still need a human "accept" on this side. */
+    private final List<Profile> addRequests = new CopyOnWriteArrayList<>();
     private final Map<String, Tunnel> tunnels = new ConcurrentHashMap<>();
     private final Map<String, IceState> icePeers = new ConcurrentHashMap<>();
     private final Map<String, Msg> earlyIce = new ConcurrentHashMap<>();
@@ -363,12 +368,33 @@ public final class NetPlayerClient {
     public void removeFriend(String id) {
         friends.remove(id);
         presences.remove(id);
+        addRequests.removeIf(p -> p.id.equals(id));
         saveFriends();
         watchDirty = true;
     }
 
+    // ------------------------------------------------------------------ friend requests (opt in)
+
+    /** Friend requests waiting for this user to accept or decline. */
+    public List<Profile> addRequests() {
+        return new ArrayList<>(addRequests);
+    }
+
+    public void answerAddRequest(Profile profile, boolean accept) {
+        if (profile == null) {
+            return;
+        }
+        addRequests.removeIf(p -> p.id.equals(profile.id));
+        if (!accept) {
+            return;
+        }
+        storeFriend(profile);
+        Toasts.info(Component.literal(profile.shortName()),
+                Component.translatable("netplayer.toast.friend_added"));
+    }
+
     private void storeFriend(Profile profile) {
-        if (profile == null || profile.id == null || profile.id.isEmpty()) {
+        if (profile == null || profile.id == null || profile.id.isEmpty() || !profile.selfCertified()) {
             return;
         }
         friends.computeIfAbsent(profile.id, k -> new Friend(profile));
@@ -388,7 +414,12 @@ public final class NetPlayerClient {
             if (list != null && list.isJsonArray()) {
                 for (JsonElement element : list.getAsJsonArray()) {
                     JsonObject entry = element.getAsJsonObject();
-                    Friend friend = new Friend(Profile.fromJson(entry));
+                    Profile profile = Profile.fromJson(entry);
+                    if (!profile.selfCertified()) {
+                        LOG.warn("dropping stored friend {}: id does not match its key", profile.id);
+                        continue;
+                    }
+                    Friend friend = new Friend(profile);
                     friend.note = Json.str(entry, "note");
                     friend.mcName = Json.str(entry, "mc_name");
                     friend.mcUuid = Json.str(entry, "mc_uuid");
@@ -461,30 +492,21 @@ public final class NetPlayerClient {
         String state = msg.str("state");
         Presence presence = new Presence(id, state.isEmpty() ? "offline" : state, msg.str("detail"));
         JsonObject room = msg.obj("room");
-        presence.roomId = Json.str(room, "id");
+        // The server only tells us whether the world is open for us; the room id, its token and the
+        // allow list stay server side on purpose.
+        presence.hosting = room.size() > 0;
+        presence.open = Json.bool(room, "open");
         presence.world = Json.str(room, "world");
         presence.premium = Json.bool(room, "premium");
         presence.mcName = msg.str("name");
         presence.mcUuid = msg.str("uuid");
         Friend known = friends.get(id);
         if (known != null) {
-            boolean changed = false;
+            // Only the display name comes from presence: the uuid we pin is the one Mojang
+            // confirmed through the premium proof, never one the relay claims.
             if (!presence.mcName.isEmpty() && !presence.mcName.equals(known.mcName)) {
                 known.mcName = presence.mcName;
-                changed = true;
-            }
-            if (!presence.mcUuid.isEmpty() && !presence.mcUuid.equals(known.mcUuid)) {
-                known.mcUuid = presence.mcUuid;
-                changed = true;
-            }
-            if (changed) {
                 saveFriends();
-            }
-        }
-        JsonElement allow = room.get("allow");
-        if (allow != null && allow.isJsonArray()) {
-            for (JsonElement element : allow.getAsJsonArray()) {
-                presence.allow.add(element.getAsString());
             }
         }
         Presence previous = presences.put(id, presence);
@@ -524,16 +546,26 @@ public final class NetPlayerClient {
             case "presence" -> onPresence(msg);
             case "add" -> {
                 Profile profile = Profile.fromJson(msg.obj("from"));
-                if (profile.id != null && !profile.id.isEmpty() && !friends.containsKey(profile.id)) {
-                    storeFriend(profile);
+                // Never write a friend into the list on somebody else's word: the user decides.
+                if (profile.selfCertified() && !friends.containsKey(profile.id) && addRequests.size() < MAX_REQUESTS
+                        && addRequests.stream().noneMatch(p -> p.id.equals(profile.id))) {
+                    addRequests.add(profile);
                     Toasts.info(Component.literal(profile.shortName()),
-                            Component.translatable("netplayer.toast.friend_added"));
+                            Component.translatable("netplayer.toast.friend_request"));
                 }
             }
             case "join_req" -> {
                 Profile guest = Profile.fromJson(msg.obj("guest"));
+                if (!guest.selfCertified()) {
+                    LOG.warn("join request with a forged identity, ignored");
+                    return;
+                }
+                if (pendingJoins.size() >= MAX_REQUESTS) {
+                    LOG.warn("join request from {} dropped, queue is full", guest.shortName());
+                    return;
+                }
                 pendingJoins.add(new Pending(guest, msg.str("room"), msg.str("world"), System.currentTimeMillis(),
-                        msg.obj("mc")));
+                        msg.obj("mc"), msg.str("token")));
                 LOG.info("join request from {} ({})", guest.shortName(), guest.id);
                 Toasts.info(Component.literal(guest.shortName()),
                         Component.translatable("netplayer.toast.join_request"));
@@ -671,7 +703,8 @@ public final class NetPlayerClient {
             notify("netplayer.error.not_open");
             return;
         }
-        requestJoin(friendId, presence.roomId, "", presence.premium);
+        // The room id is not public any more: the server resolves the host's open room.
+        requestJoin(friendId, "", "", presence.premium);
     }
 
     private void requestJoin(String hostId, String roomId, String token, boolean needPremium) {
@@ -711,9 +744,22 @@ public final class NetPlayerClient {
         if (room == null) {
             return;
         }
+        if (!room.id().equals(pending.room())) {
+            return;
+        }
         if (!accept) {
             send(Msg.of("join_ans").put("to", pending.guest().id).put("room", room.id()).put("accept", false)
                     .put("reason", "declined"));
+            return;
+        }
+        // Re-check authorization locally instead of trusting the relay: the guest either is on the
+        // allow list or presented this room's token. Otherwise a compromised or buggy signaling
+        // server could talk anybody into our world.
+        boolean allowed = room.allow().contains("*") || room.allow().contains(pending.guest().id)
+                || (!pending.token().isEmpty() && pending.token().equals(room.token()));
+        if (!allowed) {
+            send(Msg.of("join_ans").put("to", pending.guest().id).put("room", room.id()).put("accept", false)
+                    .put("reason", "not_allowed"));
             return;
         }
         if (!config.verifyPremium) {
@@ -721,7 +767,7 @@ public final class NetPlayerClient {
             return;
         }
         Thread.ofVirtual().name("netplayer-premium-check").start(() -> {
-            if (!verifyProof(pending.proof())) {
+            if (!verifyProof(pending.proof(), pending.guest())) {
                 send(Msg.of("join_ans").put("to", pending.guest().id).put("room", room.id()).put("accept", false)
                         .put("reason", "not_premium"));
                 Toasts.info(Component.literal(pending.guest().shortName()),
@@ -751,6 +797,16 @@ public final class NetPlayerClient {
         Profile host = Profile.fromJson(msg.obj("host"));
         if (host.id == null || host.id.isEmpty()) {
             return;
+        }
+        if (!host.selfCertified()) {
+            LOG.warn("join answer carrying an identity that does not match its key, ignored");
+            failJoin("netplayer.error.bad_signature");
+            return;
+        }
+        // Trust on first use: once we know a friend we never let a later message swap his keys.
+        Friend known = friends.get(host.id);
+        if (known != null) {
+            host = known.profile;
         }
         storeFriend(host);
         JoinFlow flow = new JoinFlow(host, msg.str("room"), msg.str("world"));
@@ -797,15 +853,17 @@ public final class NetPlayerClient {
             try {
                 IceLink link = new IceLink(controlling, config.stunServers);
                 KeyPair ephemeral = Crypto.xKeyPair();
-                state = new IceState(link, ephemeral, controlling, lanPort);
+                state = new IceState(link, ephemeral, controlling, lanPort, peer, roomId);
                 icePeers.put(peer.id, state);
                 LOG.info("ICE start as {} with {} ({})", controlling ? "guest" : "host", peer.shortName(), peer.id);
                 JsonObject description = link.localDescription();
                 String epk = Bytes.b64(ephemeral.getPublic().getEncoded());
-                String signed = "ice:" + roomId + ":" + Json.str(description, "ufrag") + ":"
-                        + Json.str(description, "pwd") + ":" + epk;
                 description.addProperty("room", roomId);
                 description.addProperty("epk", epk);
+                // Bind both identities, the room and the ephemeral key into the signature: the
+                // peer verifies it against the profile it already stored for us, so a relay
+                // cannot swap in its own key.
+                String signed = Handshake.ice(roomId, me().id, peer.id, description);
                 description.addProperty("sig", Bytes.b64(identity.sign(signed.getBytes(StandardCharsets.UTF_8))));
                 Msg msg = Msg.of("ice", description);
                 msg.put("to", peer.id);
@@ -822,6 +880,11 @@ public final class NetPlayerClient {
 
     private void onIce(Msg msg) {
         Profile from = Profile.fromJson(msg.obj("from"));
+        // An identity only counts when its id is derived from its own signing key.
+        if (!from.selfCertified()) {
+            LOG.warn("ice from an identity that does not match its key, dropped");
+            return;
+        }
         IceState state = icePeers.get(from.id);
         if (state == null) {
             if (earlyIce.size() < 8) {
@@ -833,12 +896,23 @@ public final class NetPlayerClient {
     }
 
     private void processIce(Profile from, Msg msg, IceState state) {
-        String signed = "ice:" + Json.str(msg.data, "room") + ":" + msg.str("ufrag") + ":" + msg.str("pwd")
-                + ":" + msg.str("epk");
-        if (!Crypto.verify(from, signed, msg.str("sig"))) {
+        // Verify against the key we already trust for this peer, never against the key the message
+        // itself carries; otherwise anybody could sign a message "as" a friend with a fresh key.
+        Profile expected = state.peer;
+        if (expected == null || !expected.id.equals(from.id)) {
+            LOG.warn("ice from {} ignored: not the peer we are connecting to", from.id);
             return;
         }
         JsonObject remote = msg.data.deepCopy();
+        if (!Json.str(remote, "room").equals(state.roomId)) {
+            LOG.warn("ice for another room ignored");
+            return;
+        }
+        String signed = Handshake.ice(state.roomId, expected.id, me().id, remote);
+        if (!Crypto.verify(expected, signed, msg.str("sig"))) {
+            LOG.warn("ice signature rejected for {}", expected.shortName());
+            return;
+        }
         Thread.ofVirtual().name("netplayer-ice-finish").start(() -> {
             try {
                 state.link.acceptRemote(remote);
@@ -904,26 +978,26 @@ public final class NetPlayerClient {
             try {
                 IceLink link = new IceLink(false, config.stunServers);
                 KeyPair ephemeral = Crypto.xKeyPair();
-                state = new IceState(link, ephemeral, false, room.port());
+                state = new IceState(link, ephemeral, false, room.port(), null, room.id());
                 directPending = state;
                 JsonObject ice = link.localDescription();
                 String epk = Bytes.b64(ephemeral.getPublic().getEncoded());
                 JsonObject payload = Json.obj();
-                payload.addProperty("v", 1);
+                payload.addProperty("v", Invite.CODE_VERSION);
                 payload.addProperty("room", room.id());
                 payload.addProperty("world", room.world());
                 payload.addProperty("token", room.token());
-        payload.addProperty("premium", room.premium());
+                payload.addProperty("premium", room.premium());
                 payload.addProperty("port", room.port());
                 payload.add("host", me().toJson());
                 JsonArray allow = new JsonArray();
                 room.allow().forEach(allow::add);
                 payload.add("allow", allow);
-                payload.addProperty("premium", config.verifyPremium);
                 payload.add("ice", ice);
                 payload.addProperty("epk", epk);
-                payload.addProperty("sig", Bytes.b64(identity.sign(directSigned("offer", room.id(), ice, epk)
-                        .getBytes(StandardCharsets.UTF_8))));
+                // Everything above is covered, so premium/allow/world cannot be edited downstream.
+                payload.addProperty("sig", Bytes.b64(identity.sign(
+                        Json.canonical(payload).getBytes(StandardCharsets.UTF_8))));
                 String code = Invite.directOffer(payload);
                 lastDirectOffer = code;
                 String name = room.world();
@@ -989,7 +1063,12 @@ public final class NetPlayerClient {
         JsonObject ice = Json.sub(payload, "ice");
         String epk = Json.str(payload, "epk");
         String roomId = Json.str(payload, "room");
-        if (!Crypto.verify(host, directSigned("offer", roomId, ice, epk), Json.str(payload, "sig"))) {
+        if ((long) Json.num(payload, "v") != Invite.CODE_VERSION) {
+            return "netplayer.error.key_too_old";
+        }
+        // The signature covers every field of the payload except itself, so allow/premium/world
+        // cannot be edited by whoever forwards the code.
+        if (!Crypto.verify(host, Json.canonical(Json.without(payload, "sig")), Json.str(payload, "sig"))) {
             return "netplayer.error.bad_signature";
         }
         boolean allowed = false;
@@ -1023,7 +1102,7 @@ public final class NetPlayerClient {
             try {
                 IceLink link = new IceLink(true, config.stunServers);
                 KeyPair ephemeral = Crypto.xKeyPair();
-                state = new IceState(link, ephemeral, true, 0);
+                state = new IceState(link, ephemeral, true, 0, host, roomId);
                 icePeers.put(host.id, state);
                 JsonObject mine = link.localDescription();
                 String myEpk = Bytes.b64(ephemeral.getPublic().getEncoded());
@@ -1038,16 +1117,17 @@ public final class NetPlayerClient {
                     proof = made;
                 }
                 JsonObject answer = Json.obj();
-                answer.addProperty("v", 1);
+                answer.addProperty("v", Invite.CODE_VERSION);
                 answer.addProperty("room", roomId);
+                answer.addProperty("token", Json.str(payload, "token"));
                 answer.add("guest", me().toJson());
                 if (proof.size() > 0) {
                     answer.add("mc", proof);
                 }
                 answer.add("ice", mine);
                 answer.addProperty("epk", myEpk);
-                answer.addProperty("sig", Bytes.b64(identity.sign(directSigned("answer", roomId, mine, myEpk)
-                        .getBytes(StandardCharsets.UTF_8))));
+                answer.addProperty("sig", Bytes.b64(identity.sign(
+                        Json.canonical(answer).getBytes(StandardCharsets.UTF_8))));
                 String code = Invite.directAnswer(answer);
                 lastDirectAnswer = code;
                 Minecraft.getInstance().execute(() -> {
@@ -1077,16 +1157,26 @@ public final class NetPlayerClient {
         JsonObject ice = Json.sub(payload, "ice");
         String epk = Json.str(payload, "epk");
         String roomId = Json.str(payload, "room");
-        if (!Crypto.verify(guest, directSigned("answer", roomId, ice, epk), Json.str(payload, "sig"))) {
-            return "netplayer.error.bad_signature";
+        if ((long) Json.num(payload, "v") != Invite.CODE_VERSION) {
+            return "netplayer.error.key_too_old";
         }
-        if (config.verifyPremium && !verifyProof(Json.sub(payload, "mc"))) {
-            return "netplayer.error.guest_not_premium";
+        if (!Crypto.verify(guest, Json.canonical(Json.without(payload, "sig")), Json.str(payload, "sig"))) {
+            return "netplayer.error.bad_signature";
         }
         Room room = hosting;
         IceState state = directPending;
         if (room == null || state == null || !room.id().equals(roomId)) {
             return "netplayer.error.direct_stale";
+        }
+        // Authorize against our own room state, not against the fields of the answer: the guest
+        // has to be on the allow list or echo the token it got inside our signed offer.
+        boolean allowed = room.allow().contains("*") || room.allow().contains(guest.id)
+                || (!Json.str(payload, "token").isEmpty() && Json.str(payload, "token").equals(room.token()));
+        if (!allowed) {
+            return "netplayer.error.not_allowed";
+        }
+        if (config.verifyPremium && !verifyProof(Json.sub(payload, "mc"), guest)) {
+            return "netplayer.error.guest_not_premium";
         }
         storeFriend(guest);
         directPending = null;
@@ -1107,11 +1197,6 @@ public final class NetPlayerClient {
             }
         });
         return null;
-    }
-
-    private static String directSigned(String kind, String roomId, JsonObject ice, String epk) {
-        return "direct-" + kind + ":" + roomId + ":" + Json.str(ice, "ufrag") + ":" + Json.str(ice, "pwd")
-                + ":" + epk;
     }
 
     // ------------------------------------------------------------------ settings and link info
@@ -1249,30 +1334,76 @@ public final class NetPlayerClient {
                 return null;
             }
             String profileId = user.getProfileId() == null ? "" : user.getProfileId().toString();
+            String name = user.getName() == null ? "" : user.getName();
             String serverId = PremiumAuth.newServerId();
             if (!PremiumAuth.join(user.getAccessToken(), profileId, serverId)) {
                 return null;
             }
             JsonObject proof = Json.obj();
-            proof.addProperty("name", user.getName());
+            proof.addProperty("name", name);
             proof.addProperty("uuid", profileId);
             proof.addProperty("serverId", serverId);
+            // Signed with the tunnel identity: whoever relays the proof cannot reuse it, and the
+            // host can tell that the account belongs to the peer it is talking to.
+            String basis = Handshake.premium(name, profileId, serverId);
+            proof.addProperty("sig", Bytes.b64(identity.sign(basis.getBytes(StandardCharsets.UTF_8))));
             return proof;
         } catch (Exception e) {
             return null;
         }
     }
 
-    private boolean verifyProof(JsonObject proof) {
+    /**
+     * Verifies that {@code peer} owns a genuine Mojang account: the proof must be signed by that
+     * identity, must still be valid per Mojang, and the account has to stay the same one for the
+     * same friend id (first use pins it).
+     */
+    private boolean verifyProof(JsonObject proof, Profile peer) {
         if (proof == null || proof.size() == 0) {
             LOG.warn("premium check rejected: guest sent no proof");
             return false;
         }
+        if (peer == null || !peer.selfCertified()) {
+            LOG.warn("premium check rejected: peer identity is not self certified");
+            return false;
+        }
         String name = Json.str(proof, "name");
-        JsonObject profile = PremiumAuth.hasJoined(name, Json.str(proof, "serverId"));
-        boolean ok = profile != null && !Json.str(profile, "id").isEmpty();
-        LOG.info("premium check for {} -> {}", name, ok ? "ok" : "failed");
-        return ok;
+        String uuid = Json.str(proof, "uuid");
+        String serverId = Json.str(proof, "serverId");
+        if (!Crypto.verify(peer, Handshake.premium(name, uuid, serverId), Json.str(proof, "sig"))) {
+            LOG.warn("premium check rejected: proof was not signed by {}", peer.shortName());
+            return false;
+        }
+        JsonObject profile = PremiumAuth.hasJoined(name, serverId);
+        if (profile == null) {
+            LOG.warn("premium check rejected: mojang does not know serverId {}", serverId);
+            return false;
+        }
+        String mojangId = Json.str(profile, "id").replace("-", "");
+        if (mojangId.isEmpty() || !mojangId.equalsIgnoreCase(uuid.replace("-", ""))) {
+            LOG.warn("premium check rejected: proof uuid does not match the mojang profile");
+            return false;
+        }
+        Friend known = friends.get(peer.id);
+        if (known != null && known.mcUuid != null && !known.mcUuid.isEmpty()
+                && !known.mcUuid.replace("-", "").equalsIgnoreCase(mojangId)) {
+            LOG.warn("premium check rejected: {} switched minecraft account (pinned {})", peer.id, known.mcUuid);
+            return false;
+        }
+        LOG.info("premium check for {} ({}) -> ok", name, peer.id);
+        pinMcAccount(peer.id, name, mojangId);
+        return true;
+    }
+
+    /** Remembers which Minecraft account sits behind a NetPlayer identity (trust on first use). */
+    private void pinMcAccount(String friendId, String name, String uuid) {
+        Friend friend = friends.get(friendId);
+        if (friend == null || (friend.mcUuid != null && !friend.mcUuid.isEmpty())) {
+            return;
+        }
+        friend.mcName = name;
+        friend.mcUuid = uuid;
+        saveFriends();
     }
 
     private void notify(String key) {
@@ -1286,12 +1417,17 @@ public final class NetPlayerClient {
         final KeyPair ephemeral;
         final boolean controlling;
         final int lanPort;
+        /** The peer's identity as we knew it when the handshake started: the only key we accept. */
+        final Profile peer;
+        final String roomId;
 
-        IceState(IceLink link, KeyPair ephemeral, boolean controlling, int lanPort) {
+        IceState(IceLink link, KeyPair ephemeral, boolean controlling, int lanPort, Profile peer, String roomId) {
             this.link = link;
             this.ephemeral = ephemeral;
             this.controlling = controlling;
             this.lanPort = lanPort;
+            this.peer = peer;
+            this.roomId = roomId;
         }
 
         void close() {

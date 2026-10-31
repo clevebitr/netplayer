@@ -12,11 +12,15 @@
  *   cross connection state (watchers / rooms / pending friend requests) lives in DO storage.
  */
 import { Msg, JsonObject, bool, encode, msg, num, obj, parseLine, str, strings } from "./protocol";
-import { verifyEd25519 } from "./verify";
+import { profileIdMatches, verifyEd25519 } from "./verify";
 
 const STATE_KEY = "state";
 const PENDING_TTL_MS = 24 * 60 * 60 * 1000;
 const HELLO_SKEW_MS = 120_000;
+/** Guard rails against a single connection eating the object. */
+const MAX_TEXT = 64 * 1024;
+const MAX_PENDING_ADDS = 64;
+const MAX_WATCH_IDS = 512;
 
 export interface Env {
   SIGNAL: DurableObjectNamespace;
@@ -43,6 +47,8 @@ interface Persisted {
   rooms: Record<string, Room>;
   /** targetId -> friend requests queued while the target was offline */
   pending: Record<string, Pending[]>;
+  /** roomId -> guests whose join_req was forwarded and is still unanswered */
+  waiting: Record<string, string[]>;
   tickets: number;
 }
 
@@ -59,7 +65,7 @@ function blank(): Att {
 }
 
 function emptyState(): Persisted {
-  return { watchers: {}, rooms: {}, pending: {}, tickets: 0 };
+  return { watchers: {}, rooms: {}, pending: {}, waiting: {}, tickets: 0 };
 }
 
 export class SignalRoom implements DurableObject {
@@ -100,6 +106,9 @@ export class SignalRoom implements DurableObject {
 
   async webSocketMessage(ws: WebSocket, message: string | ArrayBuffer): Promise<void> {
     const text = typeof message === "string" ? message : new TextDecoder().decode(message);
+    if (text.length > MAX_TEXT) {
+      return;
+    }
     for (const line of text.split("\n")) {
       const trimmed = line.trim();
       if (!trimmed) {
@@ -169,6 +178,12 @@ export class SignalRoom implements DurableObject {
       this.reject(ws, "stale hello");
       return;
     }
+    // The id has to be the hash of the signing key, otherwise a client could announce any id it
+    // likes (and kick that user off the server) with a key it owns.
+    if (!(await profileIdMatches(str(profile, "ed"), id))) {
+      this.reject(ws, "id does not match key");
+      return;
+    }
     if (!(await verifyEd25519(str(profile, "ed"), `hello:${id}:${ts}`, str(m.d, "sig")))) {
       this.reject(ws, "bad signature");
       return;
@@ -203,7 +218,7 @@ export class SignalRoom implements DurableObject {
       }
     }
     for (const watcher of this.subscribersOf(id)) {
-      this.sendToId(watcher, this.presenceOf(id));
+      this.sendToId(watcher, this.presenceOf(id, watcher));
     }
   }
 
@@ -213,7 +228,7 @@ export class SignalRoom implements DurableObject {
       return;
     }
     const data = await this.state();
-    const ids = strings(m.d, "ids");
+    const ids = strings(m.d, "ids").slice(0, MAX_WATCH_IDS);
     for (const [target, list] of Object.entries(data.watchers)) {
       const next = list.filter((w) => w !== att.id);
       if (next.length) {
@@ -229,7 +244,7 @@ export class SignalRoom implements DurableObject {
       }
       data.watchers[id] = list;
       if (this.findSession(id)) {
-        this.send(ws, this.presenceOf(id));
+        this.send(ws, this.presenceOf(id, att.id));
       }
     }
     await this.save();
@@ -263,6 +278,9 @@ export class SignalRoom implements DurableObject {
     }
     const data = await this.state();
     const list = data.pending[to] ?? [];
+    if (list.length >= MAX_PENDING_ADDS) {
+      return;
+    }
     list.push({ at: Date.now(), profile: att.profile ?? {} });
     data.pending[to] = list;
     await this.save();
@@ -282,6 +300,13 @@ export class SignalRoom implements DurableObject {
     const allow = Array.isArray(rawAllow) ? rawAllow.map((e) => String(e)) : ["*"];
 
     const data = await this.state();
+    // A host has exactly one world open: drop whatever it published before.
+    for (const [previousId, previous] of Object.entries(data.rooms)) {
+      if (previous.host === att.id && previousId !== id) {
+        delete data.rooms[previousId];
+        delete data.waiting[previousId];
+      }
+    }
     data.rooms[id] = {
       id,
       host: att.id,
@@ -299,15 +324,17 @@ export class SignalRoom implements DurableObject {
   }
 
   private async roomClose(ws: WebSocket, m: Msg): Promise<void> {
+    const att = this.att(ws);
     const data = await this.state();
     const room = data.rooms[str(m.d, "room")];
-    if (!room) {
+    // Only the host may close its own room; otherwise anyone could kick a stranger's guests.
+    if (!room || !att.id || room.host !== att.id) {
       return;
     }
     delete data.rooms[room.id];
+    delete data.waiting[room.id];
     await this.save();
 
-    const att = this.att(ws);
     if (att.roomId === room.id) {
       att.roomId = null;
       ws.serializeAttachment(att);
@@ -321,19 +348,21 @@ export class SignalRoom implements DurableObject {
     if (!att.id) {
       return;
     }
-    const roomId = str(m.d, "room");
     const data = await this.state();
-    const room = data.rooms[roomId];
+    // The client no longer learns room ids from presence: it names the host and the server
+    // resolves the currently open room. A room key (npjoin1) still arrives with an explicit id.
+    const explicit = str(m.d, "room");
+    const room = explicit
+      ? data.rooms[explicit]
+      : Object.values(data.rooms).find((r) => r.host === str(m.d, "host"));
     if (!room) {
-      this.send(ws, msg("join_ans", { room: roomId, accept: false, reason: "room_closed" }));
+      this.send(ws, msg("join_ans", { room: explicit, accept: false, reason: "room_closed" }));
       return;
     }
-    let allowed = room.allow.includes("*") || room.allow.includes(att.id);
+    const allowed = room.allow.includes("*") || room.allow.includes(att.id);
     const token = str(m.d, "token");
-    if (!allowed && token && token === room.token) {
-      allowed = true;
-    }
-    if (!allowed) {
+    const viaToken = !allowed && !!token && token === room.token;
+    if (!allowed && !viaToken) {
       this.send(ws, msg("join_ans", { room: room.id, accept: false, reason: "not_allowed" }));
       return;
     }
@@ -342,6 +371,11 @@ export class SignalRoom implements DurableObject {
       this.send(ws, msg("join_ans", { room: room.id, accept: false, reason: "host_offline" }));
       return;
     }
+    const waiting = data.waiting[room.id] ?? [];
+    if (!waiting.includes(att.id)) {
+      waiting.push(att.id);
+    }
+    data.waiting[room.id] = waiting;
     data.tickets += 1;
     await this.save();
     this.send(
@@ -351,6 +385,7 @@ export class SignalRoom implements DurableObject {
         world: room.world,
         ticket: data.tickets,
         guest: att.profile,
+        token: viaToken ? token : "",
         mc: obj(m.d, "mc"),
       }),
     );
@@ -361,16 +396,29 @@ export class SignalRoom implements DurableObject {
     if (!att.id) {
       return;
     }
-    const guest = this.findWs(str(m.d, "to"));
+    const data = await this.state();
+    const room = data.rooms[str(m.d, "room")];
+    // Only the host of that room can answer for it, and only to a guest that actually asked.
+    // Without this any session could accept on the host's behalf and receive the room token,
+    // which in turn bypasses the allow list.
+    if (!room || room.host !== att.id) {
+      return;
+    }
+    const to = str(m.d, "to");
+    const waiting = data.waiting[room.id] ?? [];
+    if (!waiting.includes(to)) {
+      return;
+    }
+    data.waiting[room.id] = waiting.filter((g) => g !== to);
+    await this.save();
+
+    const guest = this.findWs(to);
     if (!guest) {
       return;
     }
-    const roomId = str(m.d, "room");
     const accept = bool(m.d, "accept");
-    const data = await this.state();
-    const room = data.rooms[roomId];
-    const d: JsonObject = { room: roomId, accept };
-    if (accept && room) {
+    const d: JsonObject = { room: room.id, accept, reason: accept ? "" : str(m.d, "reason") };
+    if (accept) {
       d.host = att.profile;
       d.world = room.world;
       d.token = room.token;
@@ -419,6 +467,7 @@ export class SignalRoom implements DurableObject {
     const roomId = att.roomId;
     if (roomId && data.rooms[roomId] && data.rooms[roomId].host === id) {
       delete data.rooms[roomId];
+      delete data.waiting[roomId];
     }
     await this.save();
 
@@ -432,7 +481,10 @@ export class SignalRoom implements DurableObject {
 
   private async state(): Promise<Persisted> {
     if (!this.data) {
-      this.data = (await this.ctx.storage.get<Persisted>(STATE_KEY)) ?? emptyState();
+      const stored = await this.ctx.storage.get<Persisted>(STATE_KEY);
+      this.data = stored ?? emptyState();
+      // State written by an older deployment has no `waiting` bucket.
+      this.data.waiting ??= {};
     }
     return this.data;
   }
@@ -470,7 +522,13 @@ export class SignalRoom implements DurableObject {
     return list ? [...list] : [];
   }
 
-  private presenceOf(id: string): Msg {
+  /**
+   * Presence of `id` as seen by `viewer`. The room id, its token and the allow list stay on the
+   * server: they used to be broadcast to every watcher, and anyone who can read the allow list
+   * also learns the ids needed to impersonate one of the guests. The server answers the only
+   * question a friend needs anyway, "is it open for me".
+   */
+  private presenceOf(id: string, viewer: string | null): Msg {
     const session = this.findSession(id);
     if (!session) {
       return msg("presence", { id, state: "offline", detail: "" });
@@ -479,20 +537,17 @@ export class SignalRoom implements DurableObject {
     const room = session.att.roomId ? this.data?.rooms[session.att.roomId] : undefined;
     if (room && room.host === id) {
       out.d.room = {
-        id: room.id,
         world: room.world,
-        host: room.host,
         premium: room.premium,
-        allow: room.allow,
+        open: room.allow.includes("*") || (!!viewer && room.allow.includes(viewer)),
       };
     }
     return out;
   }
 
   private broadcastPresence(id: string): void {
-    const presence = this.presenceOf(id);
     for (const watcher of this.subscribersOf(id)) {
-      this.sendToId(watcher, presence);
+      this.sendToId(watcher, this.presenceOf(id, watcher));
     }
   }
 

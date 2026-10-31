@@ -29,6 +29,8 @@ import java.util.List;
  */
 public final class IceLink implements AutoCloseable {
     public static final int MAX_DATAGRAM = 1500;
+    /** A peer cannot make us chew through an unbounded candidate list. */
+    private static final int MAX_CANDIDATES = 32;
 
     private final Agent agent;
     private final IceMediaStream stream;
@@ -97,16 +99,83 @@ public final class IceLink implements AutoCloseable {
         stream.setRemotePassword(Json.str(remote, "pwd"));
         JsonElement list = remote.get("cands");
         if (list != null && list.isJsonArray()) {
+            int accepted = 0;
             for (JsonElement element : list.getAsJsonArray()) {
+                if (accepted >= MAX_CANDIDATES || !element.isJsonObject()) {
+                    break;
+                }
                 JsonObject c = element.getAsJsonObject();
-                TransportAddress address = new TransportAddress(
-                        InetAddress.getByName(Json.str(c, "ip")), (int) Json.num(c, "port"), Transport.UDP);
+                TransportAddress address = addressOf(Json.str(c, "ip"), (int) Json.num(c, "port"));
+                if (address == null) {
+                    continue;
+                }
+                accepted++;
                 RemoteCandidate candidate = new RemoteCandidate(address, component,
                         CandidateType.parse(Json.str(c, "type")), Json.str(c, "fnd"), Json.num(c, "prio"), null);
                 component.addRemoteCandidate(candidate);
             }
         }
         agent.startConnectivityEstablishment();
+    }
+
+    /**
+     * Builds a candidate address from a literal IP only. A peer could otherwise send a host name
+     * and make us resolve it or fire UDP at arbitrary internal addresses, which is a cheap way to
+     * probe a network from the outside.
+     */
+    private static TransportAddress addressOf(String ip, int port) {
+        if (ip == null || port <= 0 || port > 65535) {
+            return null;
+        }
+        String text = ip.strip();
+        InetAddress address = parseLiteral(text);
+        if (address == null || address.isAnyLocalAddress() || address.isMulticastAddress()) {
+            return null;
+        }
+        return new TransportAddress(address, port, Transport.UDP);
+    }
+
+    /** Only numeric IPv4 and IPv6 literals; never a name that would trigger a DNS lookup. */
+    private static InetAddress parseLiteral(String text) {
+        try {
+            if (text.indexOf(':') < 0) {
+                String[] parts = text.split("[.]", -1);
+                if (parts.length != 4) {
+                    return null;
+                }
+                byte[] raw = new byte[4];
+                for (int i = 0; i < 4; i++) {
+                    if (parts[i].isEmpty() || parts[i].length() > 3) {
+                        return null;
+                    }
+                    for (int j = 0; j < parts[i].length(); j++) {
+                        if (!Character.isDigit(parts[i].charAt(j))) {
+                            return null;
+                        }
+                    }
+                    int value = Integer.parseInt(parts[i]);
+                    if (value > 255) {
+                        return null;
+                    }
+                    raw[i] = (byte) value;
+                }
+                return InetAddress.getByAddress(raw);
+            }
+            // A string with a colon can never be a host name, so this stays a literal parse.
+            if (text.indexOf(':') == text.lastIndexOf(':')) {
+                return null;
+            }
+            for (int i = 0; i < text.length(); i++) {
+                char c = text.charAt(i);
+                boolean hex = Character.digit(c, 16) >= 0;
+                if (!hex && c != ':' && c != '.') {
+                    return null;
+                }
+            }
+            return InetAddress.getByName(text);
+        } catch (Exception e) {
+            return null;
+        }
     }
 
     public boolean awaitConnected(long timeoutMs) {

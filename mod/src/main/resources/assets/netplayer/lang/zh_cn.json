@@ -142,5 +142,9 @@
   "netplayer.settings.proxy_label": "HTTP 代理（可选）",
   "netplayer.settings.proxy_port": "端口",
   "netplayer.status.signal_connected": "信令：已连接",
-  "netplayer.status.signal_offline": "信令：未连接"
+  "netplayer.status.signal_offline": "信令：未连接",
+  "netplayer.toast.friend_request": "想加你为好友",
+  "netplayer.friends.add_request": "%s 想加你为好友",
+  "netplayer.friends.request_tip": "同意后才会出现在你的好友列表里",
+  "netplayer.error.key_too_old": "这个码来自旧版本，请让对方重新生成"
 }

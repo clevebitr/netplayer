@@ -22,6 +22,27 @@ function b64ToBytes(text: string): Uint8Array | null {
   }
 }
 
+/**
+ * A NetPlayer id is the first 16 hex chars of SHA-256 over the X.509 encoded signing key
+ * (core/Profile.java). The server checks it on hello so that nobody can announce somebody
+ * else's id with a key of their own, which is what makes the id usable as an identity at all.
+ */
+export async function profileIdMatches(keyB64: string, id: string): Promise<boolean> {
+  const key = b64ToBytes(keyB64);
+  if (!key || !id || id.length !== 16) {
+    return false;
+  }
+  try {
+    const digest = await crypto.subtle.digest("SHA-256", key as BufferSource);
+    const hex = Array.from(new Uint8Array(digest))
+      .map((b) => b.toString(16).padStart(2, "0"))
+      .join("");
+    return hex.slice(0, 16) === id;
+  } catch {
+    return false;
+  }
+}
+
 export async function verifyEd25519(keyB64: string, data: string, signatureB64: string): Promise<boolean> {
   const key = b64ToBytes(keyB64);
   const sig = b64ToBytes(signatureB64);

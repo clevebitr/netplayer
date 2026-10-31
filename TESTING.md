@@ -53,7 +53,8 @@ Java 客户端到 ws 服务的连通性可以单独测，不用起游戏：
 | --- | --- | --- |
 | 1 | 两个窗口都启动后看控制台 | 每个窗口出现 `connected to signaling server` 与 `signaling handshake done as Dev/Friend` |
 | 2 | A 点主菜单左下 **好友** → **添加好友** → **复制我的密钥** | 剪贴板里得到 `npfriend1....` |
-| 3 | B 点 **好友** → **添加好友**，粘贴 → **添加** | B 列表出现 Dev；A 右上角弹 toast `Dev 把你加为了好友`（实际是 B 加了 A，A 反向收到并自动互为好友） |
+| 3 | B 点 **好友** → **添加好友**，粘贴 → **添加** | B 列表出现 Dev；A 右上角弹 toast `Friend 想加你为好友` |
+| 3.1 | A 打开好友列表 | 顶部出现 `Friend 想加你为好友 [同意] [拒绝]`；**同意** 后 A 的列表才出现 Friend（0.2 起不再自动互加） |
 | 3.5 | A 的 **对好友开放** 界面里看「正版验证」开关 | 默认是**开**；两个开发窗口都是离线账号，测试时先把它**关掉**，否则好友会被拒 |
 | 4 | A 进单人世界（随便新建）→ `Esc` → 左下 **对好友开放** → 全部好友：开 → **开放世界** | toast `世界已对好友开放`；B 的好友列表里 Dev 置顶，状态 `开放中 xxx（对你开放）` |
 | 5 | B 点 Dev 那一行 | toast `已发送加入申请`；A 弹 toast `Friend 请求加入你的世界` |
@@ -75,6 +76,9 @@ A 在 **对好友开放** 里点 **复制房间密钥**（`npjoin1....`）发给
 | 场景 | 期望 |
 | --- | --- |
 | A 没开放世界时点好友 | 行按钮灰色不可点 |
+| 用一个 id 与公钥不匹配的伪造 `hello` 连信令服务器 | 连接被拒，服务端 stdout 记 `id does not match key`（`server` 的 `SignalServerTest` 与 `signal-worker/test/smoke.mjs` 都覆盖） |
+| 第三人（知道 room id）发 `join_ans accept=true` 冒充房主 | 不会转发；房主同意后 guest 才拿到 room token |
+| 老版本 0.1.x 的 `npair1` 码 | 提示 `这个码来自旧版本，请让对方重新生成` |
 | A 关闭开放后 B 再点 | toast `该好友没有对你开放世界` |
 | B 拒绝 / A 不同意 | 各自 toast，不进入 |
 | 关掉信令服务器 | 好友列表底部红字 `未连接到信令服务器`，8 秒后自动重连 |
@@ -117,10 +121,14 @@ A 在 **对好友开放** 里点 **复制房间密钥**（`npjoin1....`）发给
 
 ## 6. 回归脚本（可选，无 GUI）
 
-`core` 有 6 个单测覆盖密钥/签名/AES-GCM/协议编码：
+`core` 有 9 个单测覆盖密钥/签名/AES-GCM/协议编码/规范化 JSON/身份自证，`server` 有 5 个协议回归
+测试（伪造 hello、presence 不泄漏 room id 与 allow、只有房主能应答/关房、token 绕过），
+`signal-worker` 有一套端到端 smoke：
 
 ```bash
-./gradlew :core:test
+./gradlew :core:test :server:test
+cd signal-worker && npx wrangler dev --port 8787   # 另一个终端
+cd signal-worker && node test/smoke.mjs
 ```
 
 ## 7. 无信令模式（纯 P2P 信令，不需要服务器）

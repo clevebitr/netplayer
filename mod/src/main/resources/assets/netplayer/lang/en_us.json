@@ -142,5 +142,9 @@
   "netplayer.settings.proxy_label": "HTTP proxy (optional)",
   "netplayer.settings.proxy_port": "Port",
   "netplayer.status.signal_connected": "Signaling: connected",
-  "netplayer.status.signal_offline": "Signaling: offline"
+  "netplayer.status.signal_offline": "Signaling: offline",
+  "netplayer.toast.friend_request": "wants to be your friend",
+  "netplayer.friends.add_request": "%s wants to be your friend",
+  "netplayer.friends.request_tip": "Only accepted requests end up in your friend list",
+  "netplayer.error.key_too_old": "This code was made by an older version, ask for a new one"
 }

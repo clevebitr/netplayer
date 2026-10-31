@@ -22,6 +22,8 @@ public final class ReliableStream {
     private static final int WINDOW = 32;
     private static final int PAYLOAD = 1024;
     private static final long RETRANSMIT_MS = 250L;
+    /** Hard cap on buffered, not yet consumed bytes: a fast peer must not grow our heap. */
+    private static final int MAX_INBOX = 256 * 1024;
 
     public interface Sink {
         void send(byte[] packet);
@@ -133,7 +135,9 @@ public final class ReliableStream {
         int ack = readInt(packet, 5);
         int size = readShort(packet, 9);
         synchronized (lock) {
-            if (ack > baseSeq) {
+            // Only acknowledge what we actually sent: an ack beyond nextSeq is either garbage or
+            // an attempt to make us drop unacknowledged data on the floor.
+            if (ack > baseSeq && ack <= nextSeq) {
                 inflight.headMap(ack, false).clear();
                 inflightFin.headMap(ack, false).clear();
                 baseSeq = ack;
@@ -200,6 +204,17 @@ public final class ReliableStream {
     }
 
     private void deliver(int seq, byte[] data) {
+        if (closed) {
+            return;
+        }
+        if (inbox.size() > MAX_INBOX) {
+            // The reader is not keeping up (or the peer is flooding): kill the stream instead of
+            // queueing without bound.
+            closed = true;
+            inbox.reset();
+            lock.notifyAll();
+            return;
+        }
         if (seq < expect) {
             return;
         }

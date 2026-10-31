@@ -9,6 +9,9 @@ import java.nio.charset.StandardCharsets;
  * world that is currently open. Both are plain text so they survive chat and clipboard.
  */
 public final class Invite {
+    /** Bump when the signed payload layout changes: older codes then fail closed. */
+    public static final int CODE_VERSION = 2;
+
     private static final String FRIEND_PREFIX = "npfriend1.";
     private static final String ROOM_PREFIX = "npjoin1.";
     private static final String OFFER_PREFIX = "npair1.";
@@ -49,6 +52,9 @@ public final class Invite {
         if (p.id.isEmpty() || p.ed.isEmpty() || p.x.isEmpty()) {
             throw new IllegalArgumentException("friend key is incomplete");
         }
+        if (!p.selfCertified()) {
+            throw new IllegalArgumentException("friend key id does not match its key");
+        }
         return p;
     }
 
@@ -57,6 +63,9 @@ public final class Invite {
         Room r = Room.fromJson(Json.parse(decode(body)));
         if (r.roomId().isEmpty() || r.host().id.isEmpty()) {
             throw new IllegalArgumentException("room key is incomplete");
+        }
+        if (!r.host().selfCertified()) {
+            throw new IllegalArgumentException("room key host id does not match its key");
         }
         return r;
     }

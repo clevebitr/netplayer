@@ -39,6 +39,22 @@ public final class Profile {
         return new Profile(Json.str(o, "id"), Json.str(o, "name"), Json.str(o, "ed"), Json.str(o, "x"));
     }
 
+    /**
+     * True when {@link #id} really is the hash of the signing key. Every id that arrives from the
+     * network has to pass this, otherwise anybody could claim somebody else's id by sending a
+     * profile whose id does not match the key that signs in its name.
+     */
+    public boolean selfCertified() {
+        if (id == null || id.isEmpty() || ed == null || ed.isEmpty()) {
+            return false;
+        }
+        try {
+            return id.equals(Bytes.hex(Bytes.sha256(Bytes.unb64(ed))).substring(0, 16));
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
     public PublicKey edKey() {
         return parse("Ed25519", ed);
     }

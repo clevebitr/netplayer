@@ -80,7 +80,15 @@ public final class Crypto {
         return identity.sign(data);
     }
 
+    /**
+     * Verifies a signature made by {@code profile}. Profiles whose id is not derived from their own
+     * signing key are refused before the key is even looked at: an attacker must not be able to
+     * send "id = victim, ed = my key" and have the signature verify against the key it supplied.
+     */
     public static boolean verify(Profile profile, byte[] data, byte[] signature) {
+        if (profile == null || signature == null || signature.length == 0 || !profile.selfCertified()) {
+            return false;
+        }
         try {
             Signature s = Signature.getInstance("Ed25519");
             s.initVerify(profile.edKey());

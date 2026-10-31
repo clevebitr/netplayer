@@ -28,11 +28,19 @@ import java.util.concurrent.atomic.AtomicLong;
  */
 public final class SignalServer implements AutoCloseable {
     private static final long PENDING_TTL_MS = 24L * 60L * 60L * 1000L;
+    /** Guard rails against a single connection eating the process. */
+    private static final int MAX_LINE = 64 * 1024;
+    private static final int MAX_PENDING_ADDS = 64;
+    private static final int MAX_WATCH_IDS = 512;
+    private static final int MAX_SESSIONS = 4096;
+    private static final int MAX_ICE_PER_SESSION = 256;
 
     private final int port;
     private final Map<String, Session> online = new HashMap<>();
     private final Map<String, Set<String>> watchers = new HashMap<>();
     private final Map<String, Room> rooms = new HashMap<>();
+    /** roomId -> guests whose join_req this server forwarded and that are still unanswered. */
+    private final Map<String, Set<String>> waiting = new HashMap<>();
     private final Map<String, List<Pending>> pendingAdds = new HashMap<>();
     private ServerSocket server;
     private final AtomicLong tickets = new AtomicLong();
@@ -48,6 +56,12 @@ public final class SignalServer implements AutoCloseable {
     private record Pending(long at, JsonObject profile) {
     }
 
+    /** Port actually bound, useful when constructed with 0. */
+    public int port() {
+        ServerSocket socket = server;
+        return socket == null ? port : socket.getLocalPort();
+    }
+
     public void start() throws Exception {
         server = new ServerSocket(port);
         log("listening on " + server.getLocalPort());
@@ -55,6 +69,10 @@ public final class SignalServer implements AutoCloseable {
             while (!server.isClosed()) {
                 try {
                     Socket s = server.accept();
+                    if (online.size() >= MAX_SESSIONS) {
+                        s.close();
+                        continue;
+                    }
                     s.setTcpNoDelay(true);
                     Session session = new Session(s);
                     Thread.ofVirtual().name("netplayer-session").start(() -> serve(session));
@@ -68,13 +86,13 @@ public final class SignalServer implements AutoCloseable {
     }
 
     private void serve(Session session) {
-        try (BufferedReader in = new BufferedReader(
-                new InputStreamReader(session.socket.getInputStream(), StandardCharsets.UTF_8));
-             BufferedWriter out = new BufferedWriter(
-                     new OutputStreamWriter(session.socket.getOutputStream(), StandardCharsets.UTF_8))) {
+        try {
+            java.io.InputStream in = new java.io.BufferedInputStream(session.socket.getInputStream());
+            BufferedWriter out = new BufferedWriter(
+                    new OutputStreamWriter(session.socket.getOutputStream(), StandardCharsets.UTF_8));
             session.out = out;
             String line;
-            while ((line = in.readLine()) != null) {
+            while ((line = readLine(in)) != null) {
                 if (line.isEmpty()) {
                     continue;
                 }
@@ -84,6 +102,26 @@ public final class SignalServer implements AutoCloseable {
         } finally {
             disconnect(session);
         }
+    }
+
+    /** One \n terminated line with a hard length cap, so one client cannot allocate unboundedly. */
+    private static String readLine(java.io.InputStream in) {
+        StringBuilder sb = new StringBuilder(128);
+        try {
+            int c;
+            while ((c = in.read()) != -1) {
+                if (c == '\n') {
+                    return sb.toString();
+                }
+                if (sb.length() >= MAX_LINE) {
+                    return null;
+                }
+                sb.append((char) c);
+            }
+        } catch (Exception e) {
+            return null;
+        }
+        return sb.length() == 0 ? null : sb.toString();
     }
 
     private void handle(Session session, Msg msg) {
@@ -110,6 +148,12 @@ public final class SignalServer implements AutoCloseable {
             reject(session, "stale hello");
             return;
         }
+        // The id has to be the hash of the signing key, otherwise a client could announce any id
+        // it likes (and kick that user off the server) with a key it owns.
+        if (!profile.selfCertified()) {
+            reject(session, "id does not match key");
+            return;
+        }
         if (!Crypto.verify(profile, "hello:" + profile.id + ":" + ts, msg.str("sig"))) {
             reject(session, "bad signature");
             return;
@@ -128,7 +172,7 @@ public final class SignalServer implements AutoCloseable {
         for (String watcher : subscribersOf(profile.id)) {
             Session w = online.get(watcher);
             if (w != null) {
-                send(w, presenceOf(profile.id));
+                send(w, presenceOf(profile.id, watcher));
             }
         }
     }
@@ -137,7 +181,13 @@ public final class SignalServer implements AutoCloseable {
         if (session.id == null) {
             return;
         }
-        Set<String> ids = new HashSet<>(msg.strings("ids"));
+        Set<String> ids = new HashSet<>();
+        for (String id : msg.strings("ids")) {
+            if (ids.size() >= MAX_WATCH_IDS) {
+                break;
+            }
+            ids.add(id);
+        }
         watchers.entrySet().removeIf(e -> {
             e.getValue().remove(session.id);
             return e.getValue().isEmpty();
@@ -145,7 +195,7 @@ public final class SignalServer implements AutoCloseable {
         for (String id : ids) {
             watchers.computeIfAbsent(id, k -> new HashSet<>()).add(session.id);
             if (online.containsKey(id)) {
-                send(session, presenceOf(id));
+                send(session, presenceOf(id, session.id));
             }
         }
     }
@@ -175,8 +225,10 @@ public final class SignalServer implements AutoCloseable {
             send(target, Msg.of("add").put("from", from));
             return;
         }
-        pendingAdds.computeIfAbsent(to, k -> new ArrayList<>())
-                .add(new Pending(System.currentTimeMillis(), from));
+        List<Pending> list = pendingAdds.computeIfAbsent(to, k -> new ArrayList<>());
+        if (list.size() < MAX_PENDING_ADDS) {
+            list.add(new Pending(System.currentTimeMillis(), from));
+        }
     }
 
     private synchronized void roomOpen(Session session, Msg msg) {
@@ -194,6 +246,13 @@ public final class SignalServer implements AutoCloseable {
         } else {
             allow.add("*");
         }
+        // A host has exactly one world open: drop whatever it published before.
+        for (Room previous : new ArrayList<>(rooms.values())) {
+            if (previous.host().equals(session.id) && !previous.id().equals(id)) {
+                rooms.remove(previous.id());
+                waiting.remove(previous.id());
+            }
+        }
         rooms.put(id, new Room(id, session.id, Json.str(room, "world"), Json.str(room, "token"), allow,
                 Json.bool(room, "premium"), System.currentTimeMillis()));
         session.roomId = id;
@@ -201,36 +260,40 @@ public final class SignalServer implements AutoCloseable {
     }
 
     private synchronized void roomClose(Session session, Msg msg) {
-        Room room = rooms.remove(msg.str("room"));
-        if (room == null) {
+        if (session.id == null) {
             return;
         }
+        Room room = rooms.get(msg.str("room"));
+        // Only the host may close its own room; otherwise anyone could kick a stranger's guests.
+        if (room == null || !room.host().equals(session.id)) {
+            return;
+        }
+        rooms.remove(room.id());
+        waiting.remove(room.id());
         if (session.roomId != null && session.roomId.equals(room.id())) {
             session.roomId = null;
         }
         broadcastPresence(room.host());
-        Session host = online.get(room.host());
-        if (host != null) {
-            send(host, Msg.of("room_closed").put("room", room.id()));
-        }
+        send(session, Msg.of("room_closed").put("room", room.id()));
     }
 
     private synchronized void joinRequest(Session session, Msg msg) {
         if (session.id == null) {
             return;
         }
-        Room room = rooms.get(msg.str("room"));
+        // The client no longer learns room ids from presence: it names the host and the server
+        // resolves the currently open room. A room key (npjoin1) still arrives with an explicit id.
+        String roomId = msg.str("room");
+        Room room = roomId.isEmpty() ? roomOfHost(msg.str("host")) : rooms.get(roomId);
         if (room == null) {
-            send(session, Msg.of("join_ans").put("room", msg.str("room")).put("accept", false)
+            send(session, Msg.of("join_ans").put("room", roomId).put("accept", false)
                     .put("reason", "room_closed"));
             return;
         }
         boolean allowed = room.allow().contains("*") || room.allow().contains(session.id);
         String token = msg.str("token");
-        if (!allowed && token != null && !token.isEmpty() && token.equals(room.token())) {
-            allowed = true;
-        }
-        if (!allowed) {
+        boolean viaToken = !allowed && !token.isEmpty() && token.equals(room.token());
+        if (!allowed && !viaToken) {
             send(session, Msg.of("join_ans").put("room", room.id()).put("accept", false)
                     .put("reason", "not_allowed"));
             return;
@@ -241,8 +304,10 @@ public final class SignalServer implements AutoCloseable {
                     .put("reason", "host_offline"));
             return;
         }
+        waiting.computeIfAbsent(room.id(), k -> new HashSet<>()).add(session.id);
         send(host, Msg.of("join_req").put("room", room.id()).put("world", room.world())
                 .put("ticket", tickets.incrementAndGet()).put("guest", session.profile)
+                .put("token", viaToken ? token : "")
                 .put("mc", msg.obj("mc")));
     }
 
@@ -250,26 +315,50 @@ public final class SignalServer implements AutoCloseable {
         if (session.id == null) {
             return;
         }
-        Session guest = online.get(msg.str("to"));
+        Room room = rooms.get(msg.str("room"));
+        // Only the host of that room can answer for it, and only to a guest that actually asked.
+        // Without this any session could accept on the host's behalf and receive the room token,
+        // which in turn bypasses the allow list.
+        if (room == null || !room.host().equals(session.id)) {
+            return;
+        }
+        Set<String> guests = waiting.get(room.id());
+        String to = msg.str("to");
+        if (guests == null || !guests.contains(to)) {
+            return;
+        }
+        guests.remove(to);
+        Session guest = online.get(to);
         if (guest == null) {
             return;
         }
-        Room room = rooms.get(msg.str("room"));
-        Msg out = Msg.of("join_ans").put("room", msg.str("room")).put("accept", msg.bool("accept"));
-        if (msg.bool("accept") && room != null) {
+        boolean accept = msg.bool("accept");
+        Msg out = Msg.of("join_ans").put("room", room.id()).put("accept", accept)
+                .put("reason", accept ? "" : msg.str("reason"));
+        if (accept) {
             out.put("host", session.profile).put("world", room.world()).put("token", room.token());
         }
         send(guest, out);
     }
 
+    private Room roomOfHost(String hostId) {
+        for (Room room : rooms.values()) {
+            if (room.host().equals(hostId)) {
+                return room;
+            }
+        }
+        return null;
+    }
+
     private synchronized void relayIce(Session session, Msg msg) {
-        if (session.id == null) {
+        if (session.id == null || session.iceSent >= MAX_ICE_PER_SESSION) {
             return;
         }
         Session target = online.get(msg.str("to"));
         if (target == null) {
             return;
         }
+        session.iceSent++;
         msg.data.add("from", session.profile);
         msg.data.remove("to");
         send(target, msg);
@@ -295,6 +384,7 @@ public final class SignalServer implements AutoCloseable {
             if (roomId != null) {
                 Room room = rooms.remove(roomId);
                 if (room != null) {
+                    waiting.remove(room.id());
                     log("room " + roomId + " closed with its host");
                 }
             }
@@ -323,7 +413,13 @@ public final class SignalServer implements AutoCloseable {
         return set == null ? Set.of() : new HashSet<>(set);
     }
 
-    private Msg presenceOf(String id) {
+    /**
+     * Presence of {@code id} as seen by {@code viewer}. The room id, its token and the allow list
+     * stay on the server: they used to be broadcast to every watcher, and anyone who can read the
+     * allow list also learns the ids needed to impersonate one of the guests. The server answers
+     * the only question a friend needs anyway, "is it open for me".
+     */
+    private Msg presenceOf(String id, String viewer) {
         Session s = online.get(id);
         Msg msg = Msg.of("presence").put("id", id);
         if (s == null) {
@@ -332,25 +428,21 @@ public final class SignalServer implements AutoCloseable {
         msg.put("state", s.state).put("detail", s.detail).put("name", s.mcName).put("uuid", s.mcUuid);
         Room room = s.roomId == null ? null : rooms.get(s.roomId);
         if (room != null && room.host().equals(id)) {
-            JsonArray allow = new JsonArray();
-            room.allow().forEach(allow::add);
             JsonObject roomJson = Json.obj();
-            roomJson.addProperty("id", room.id());
             roomJson.addProperty("world", room.world());
-            roomJson.addProperty("host", room.host());
             roomJson.addProperty("premium", room.premium());
-            roomJson.add("allow", allow);
+            roomJson.addProperty("open",
+                    room.allow().contains("*") || (viewer != null && room.allow().contains(viewer)));
             msg.put("room", roomJson);
         }
         return msg;
     }
 
     private void broadcastPresence(String id) {
-        Msg presence = presenceOf(id);
         for (String watcher : subscribersOf(id)) {
             Session w = online.get(watcher);
             if (w != null) {
-                send(w, presence);
+                send(w, presenceOf(id, watcher));
             }
         }
     }
@@ -406,6 +498,7 @@ public final class SignalServer implements AutoCloseable {
         String mcName = "";
         String mcUuid = "";
         String roomId;
+        int iceSent;
 
         Session(Socket socket) {
             this.socket = socket;

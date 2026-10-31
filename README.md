@@ -39,6 +39,37 @@ Invite keys are plain text tokens:
 - `npfriend1....` long term friend key, contains the sender public identity, can be reused
 - `npjoin1....` one time room key, points at a world that is currently open (single use by design)
 
+## Security model
+
+Who is allowed into a world is decided by **two independent checks**, both of them on the host:
+
+1. **Identity.** An id is the first 16 hex chars of SHA-256 over the Ed25519 public key
+   (`Profile.selfCertified()`). Both signaling servers verify `id == hash(ed)` on `hello`, so a
+   client cannot announce someone else's id with a key it owns. The client additionally refuses any
+   profile whose id does not hash from its key, so a compromised or impersonated relay still cannot
+   pretend to be a friend.
+2. **Authorization.** The guest is either on the host's allow list or presents the room token. The
+   signaling server checks this, and the host checks it *again* against its own room state before
+   accepting (`join_req` carries the token the guest used, so the host can re-derive the decision).
+
+Signatures are always verified against the key that was stored for that peer when the handshake
+started, never against the key the message itself carries:
+
+| Message | Signed basis | Verified with |
+| --- | --- | --- |
+| `hello` | `hello:<id>:<ts>` | the profile being announced (must hash to `id`) |
+| `ice` | `ice2:<room>:<from>:<to>:<ufrag>:<pwd>:<epk>` | the stored profile of `<from>`, which must be the peer we are connecting to |
+| premium proof | `premium1:<name>:<uuid>:<serverId>` | the tunnel identity of the guest |
+| `npair1` / `npans1` | canonical JSON of the whole payload minus `sig` | the host/guest profile inside the payload |
+
+The room id, the room token and the allow list never leave the signaling server: presence only
+answers "is it open for me". The host's room token, the guest's premium proof and the ICE
+descriptions are the only secrets that cross the relay.
+
+Things this model does **not** protect against: a malicious host showing you a fake world, and an
+attacker who already owns your `identity.json` (the private keys are stored in
+`<game dir>/netplayer/identity.json`, owner-only permissions where the file system supports it).
+
 ## Requirements
 
 | Item | Version |
@@ -53,7 +84,7 @@ Both the host and the guest need the mod. A dedicated server does **not**.
 ## Installation
 
 1. Install NeoForge 21.11.x for Minecraft 1.21.11.
-2. Put `netplayer-0.1.0.jar` into `mods/`.
+2. Put `netplayer-0.2.0.jar` into `mods/`.
 3. Launch the game.
 
 ## Usage
@@ -155,7 +186,12 @@ systemProp.https.proxyPort=7890
 ## Limitations
 
 - Premium check only gates the tunnel; the host world still runs in offline mode, so in-game
-  identities stay name based (a real online-mode integrated server would break LAN play).
+  identities stay name based (a real online-mode integrated server would break LAN play). The check
+  binds the Mojang account to the NetPlayer identity that owns the tunnel (proof is signed by that
+  identity and the first account seen behind a friend id is pinned).
+- Client and signaling server must be the same generation: the room id is no longer published in
+  presence and invitation codes carry a signed `v: 2` payload. An 0.1.x client cannot talk to
+  an 0.2.x server.
 - No TURN relay in 0.1: symmetric NAT or carrier grade NAT pairs will fail, the mod tells you
   instead of silently hanging. IPv6 (both peers with a global address) or an open UDP port works.
 - One Minecraft connection per tunnel; the guest side uses a random loopback port.

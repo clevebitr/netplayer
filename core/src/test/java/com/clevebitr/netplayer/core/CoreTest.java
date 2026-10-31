@@ -1,5 +1,6 @@
 package com.clevebitr.netplayer.core;
 
+import com.google.gson.JsonObject;
 import org.junit.jupiter.api.Test;
 
 import javax.crypto.spec.SecretKeySpec;
@@ -67,6 +68,46 @@ class CoreTest {
         assertArrayEquals(plain, Crypto.open(kb, sealed, 0, sealed.length));
         sealed[sealed.length - 1] ^= 0x01;
         assertNull(Crypto.open(kb, sealed, 0, sealed.length));
+    }
+
+    @Test
+    void anIdMustBelongToTheKeyThatSignsForIt() {
+        Identity alice = Identity.create("Alice");
+        Identity mallory = Identity.create("Mallory");
+        // Mallory claims Alice's id with her own key: this is the shape of every impersonation.
+        Profile forged = new Profile(alice.profile.id, "Alice", mallory.profile.ed, mallory.profile.x);
+        assertTrue(alice.profile.selfCertified());
+        assertTrue(!forged.selfCertified());
+        String sig = Bytes.b64(mallory.sign(("hello:" + alice.profile.id + ":1").getBytes(StandardCharsets.UTF_8)));
+        assertTrue(!Crypto.verify(forged, "hello:" + alice.profile.id + ":1", sig));
+        assertThrows(IllegalArgumentException.class, () -> Invite.parseFriendKey(Invite.friendKey(forged)));
+    }
+
+    @Test
+    void canonicalJsonIgnoresFieldOrder() {
+        JsonObject a = Json.obj();
+        a.addProperty("room", "r1");
+        a.addProperty("premium", true);
+        JsonObject b = Json.obj();
+        b.addProperty("premium", true);
+        b.addProperty("room", "r1");
+        assertEquals(Json.canonical(a), Json.canonical(b));
+        b.addProperty("premium", false);
+        assertNotEquals(Json.canonical(a), Json.canonical(b));
+    }
+
+    @Test
+    void iceBasisBindsBothEnds() {
+        JsonObject desc = Json.obj();
+        desc.addProperty("ufrag", "u");
+        desc.addProperty("pwd", "p");
+        desc.addProperty("epk", "e");
+        String toHost = Handshake.ice("room", "guest", "host", desc);
+        JsonObject partial = Json.obj();
+        partial.addProperty("ufrag", "u");
+        assertNotEquals(toHost, Handshake.ice("room", "guest", "someone-else", desc));
+        assertNotEquals(toHost, Handshake.ice("other-room", "guest", "host", desc));
+        assertNotEquals(toHost, Handshake.ice("room", "guest", "host", partial));
     }
 
     @Test

@@ -124,6 +124,19 @@ async function presenceWith(client, predicate, ms = 4000) {
   }
 }
 
+/** Asserts that {@code type} does not arrive within {@code ms}. */
+async function expectSilence(client, type, ms = 700) {
+  try {
+    const msg = await client.next(type, ms);
+    return { silent: false, msg };
+  } catch (error) {
+    if (String(error.message).includes("timeout")) {
+      return { silent: true };
+    }
+    throw error;
+  }
+}
+
 function check(label, condition) {
   if (condition) {
     console.log(`  ok   ${label}`);
@@ -158,6 +171,19 @@ async function main() {
   check("bad signature is rejected", rejected.d.reason === "bad signature");
   forged.close();
 
+  // Mallory signs a valid hello, but claims Alice's id with her own key. The id has to be the
+  // hash of the signing key, otherwise this would kick Alice off and receive her messages.
+  const imposter = await new Client("imposter").open();
+  const mallory = identity("Mallory");
+  const stolen = {
+    profile: { ...mallory.profile, id: alice.profile.id },
+    sign: (text) => mallory.sign(text),
+  };
+  imposter.hello(stolen);
+  const refused = await imposter.next("error");
+  check("an id that does not hash from the key is rejected", refused.d.reason === "id does not match key");
+  imposter.close();
+
   console.log("presence");
   b.send("watch", { ids: [alice.profile.id] });
   const aPresence = await b.next("presence");
@@ -191,12 +217,19 @@ async function main() {
   const roomPresence = await presenceWith(b, (d) => d.room);
   check(
     "open room shows up in presence",
-    roomPresence.d.room.id === "room-1" && roomPresence.d.room.world === "My World",
+    roomPresence.d.room.world === "My World" && roomPresence.d.room.open === true,
+  );
+  check(
+    "presence no longer leaks the room id, token or allow list",
+    !("id" in roomPresence.d.room) && !("allow" in roomPresence.d.room) && !("token" in roomPresence.d.room),
   );
 
-  b.send("join_req", { room: "room-1", token: "", mc: { name: "Bob" } });
+  // The guest names the host, the server resolves the currently open room, so no room id has to
+  // be published for a join to work.
+  b.send("join_req", { host: alice.profile.id, mc: { name: "Bob" } });
   const joinReq = await a2.next("join_req");
   check("host receives join_req", joinReq.d.room === "room-1" && joinReq.d.guest.id === bob.profile.id);
+  check("join_req tells the host how the guest was authorized", joinReq.d.token === "");
 
   a2.send("join_ans", { to: bob.profile.id, room: "room-1", accept: true });
   const joinAns = await b.next("join_ans");
@@ -216,13 +249,28 @@ async function main() {
   const c = await new Client("carol").open();
   c.hello(carol);
   await c.next("hello_ok");
-  a2.send("room_open", { room: { id: "room-2", world: "Private", token: "tok-2", allow: [] } });
+  a2.send("room_open", { room: { id: "room-2", world: "Private", token: "tok-2", allow: [bob.profile.id] } });
   c.send("join_req", { room: "room-2", token: "wrong" });
   const denied = await c.next("join_ans");
   check("whitelist blocks an outsider", denied.d.accept === false && denied.d.reason === "not_allowed");
   c.send("join_req", { room: "room-2", token: "tok-2" });
   const viaToken = await a2.next("join_req");
   check("a valid room token bypasses the whitelist", viaToken.d.room === "room-2");
+  check("the host is told the guest came through the token", viaToken.d.token === "tok-2");
+
+  // Carol must not be able to answer a join request on Alice's behalf: that answer carries the
+  // room token, which would hand out a whitelist bypass to anyone who knows a room id.
+  c.send("join_ans", { to: bob.profile.id, room: "room-2", accept: true });
+  const forgedAnswer = await expectSilence(b, "join_ans");
+  check("a non-host cannot accept on the host's behalf", forgedAnswer.silent);
+
+  // Alice closing a room Carol never owned must be ignored.
+  c.send("room_close", { room: "room-2" });
+  const notClosed = await expectSilence(b, "join_ans");
+  check("a non-host cannot close a room", notClosed.silent);
+  b.send("join_req", { host: alice.profile.id });
+  const stillOpen = await a2.next("join_req");
+  check("the room is still open", stillOpen.d.room === "room-2");
 
   b.close();
   c.close();

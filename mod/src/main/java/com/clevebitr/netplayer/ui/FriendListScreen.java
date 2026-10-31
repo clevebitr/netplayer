@@ -3,6 +3,7 @@ package com.clevebitr.netplayer.ui;
 import com.clevebitr.netplayer.Friend;
 import com.clevebitr.netplayer.NetPlayerClient;
 import com.clevebitr.netplayer.Presence;
+import com.clevebitr.netplayer.core.Profile;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.components.AbstractWidget;
 import net.minecraft.client.gui.components.Button;
@@ -90,6 +91,28 @@ public final class FriendListScreen extends Screen {
         int y = 58;
         int limit = Math.max(1, (height - 58 - 34) / ROW_HEIGHT);
         int used = 0;
+
+        for (Profile profile : client.addRequests()) {
+            if (used >= limit) {
+                break;
+            }
+            used++;
+            String name = profile.shortName();
+            rows.add(addRow(Button.builder(Component.translatable("netplayer.friends.add_request", name),
+                            b -> minecraft.setScreen(new AddFriendScreen(this)))
+                    .bounds(left, y, 200, 20)
+                    .tooltip(Tooltip.create(Component.translatable("netplayer.friends.request_tip")))
+                    .build()));
+            rows.add(addRow(Button.builder(Component.translatable("netplayer.button.accept"), b -> {
+                client.answerAddRequest(profile, true);
+                refreshRows();
+            }).bounds(left + 204, y, 50, 20).build()));
+            rows.add(addRow(Button.builder(Component.translatable("netplayer.button.decline"), b -> {
+                client.answerAddRequest(profile, false);
+                refreshRows();
+            }).bounds(left + 258, y, 52, 20).build()));
+            y += ROW_HEIGHT;
+        }
 
         for (NetPlayerClient.Pending pending : client.pendingJoins()) {
             if (used >= 2 || used >= limit) {

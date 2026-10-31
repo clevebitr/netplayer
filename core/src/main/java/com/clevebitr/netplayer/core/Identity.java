@@ -62,8 +62,18 @@ public final class Identity {
         try {
             Files.createDirectories(file.getParent());
             Files.writeString(file, Json.GSON.toJson(o));
+            restrict(file);
         } catch (Exception e) {
             throw new IllegalStateException("cannot write " + file, e);
+        }
+    }
+
+    /** Best effort owner-only permissions for the file that holds the private keys. */
+    private static void restrict(Path file) {
+        try {
+            Files.setPosixFilePermissions(file, java.nio.file.attribute.PosixFilePermissions.fromString("rw-------"));
+        } catch (Exception ignored) {
+            // not a POSIX file system (Windows): nothing more to do here
         }
     }
 

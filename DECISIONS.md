@@ -62,3 +62,21 @@ DO 实现要点：单实例 idFromName("global") 模拟 Java 的 synchronized �
 - 暂停/标题菜单插行要用原版 GridLayout 真实尺寸：单元格 106、按钮 98、整行 204（4px padding），否则右侧那列会偏 4px。
 - 自定义域名 + Workers Route 必须另有代理开启的 DNS 记录，Route 不会创建记录；netplayer.clevebitr.dpdns.org 当时是 NXDOMAIN。
 - 游戏 JVM 不吃 Windows 系统代理，wss://*.workers.dev 直连超时；已在 config 与设置界面加 proxyHost/proxyPort，WSS 与 Mojang 校验都走它。
+
+## 2026-10-31 — M3 安全修复：身份闭环（id↔公钥、签名覆盖、授权双检）
+
+审计结论：加密原语没问题，问题全在身份绑定。根因是两台信令服务器的 hello 只验签自带的 ed 而不检查 `id == sha256(ed)[:16]`，客户端又用消息里自带的公钥验 ICE（自签），于是「知道某人 id」≈「能冒充某人」；再叠加 presence 广播 room.id + allow 白名单（watch 不限好友关系），白名单等于形同虚设。
+
+改动（0.2.0，协议不兼容 0.1.x）：
+1. core/Profile.selfCertified()（id 必须是 ed 的 sha256 前 16 hex）；Crypto.verify 在验签前直接拒绝非自证 profile —— 单点堵死「id=受害者 + 自己的密钥」。两台服务器 hello 各自显式检查并回 `id does not match key`。
+2. core/Handshake：签名基串集中定义。ICE 用 `ice2:room:from:to:ufrag:pwd:epk`（绑双方身份+房间+临时公钥），premium 用 `premium1:name:uuid:serverId`。客户端 IceState 记住开工时的对端 Profile，processIce 只用它验签，且要求 from.id == state.peer.id、room 与 state.roomId 一致；earlyIce 消费时同样走这条路，所以抢跑不再能劫持隧道。
+3. 直连码升 v2：签名覆盖「除 sig 外的全部字段」的规范化 JSON（Json.canonical 排序键），所以 allow/premium/world/token 都签进去了；顺手修掉 generateDirectOffer 里 premium 被写两次。房主侧 applyDirectAnswer 改为用自己 hosting 房间的 allow/token 复核（并让 guest 在 answer 里回传 token）。
+4. 授权双检：join_req 由服务端把 guest 出示的 token 一并转发，房主用自己 room 的 allow/token 再判一次，不再盲信中继。
+5. 服务端不再下发 room.id/token/allow：presence 只给 world + premium + open（按接收者算）。客户端 join 改为「报 host 名」，由服务端解析该 host 当前房间；npjoin1 房间密钥仍带 roomId 走显式路径。顺带 roomOpen 时清掉同一 host 的旧房间。
+6. 只有房主能 join_ans（且只对 waiting 里的 guest）与 room_close：否则任何知道 room id 的会话都能替房主 accept 并把 token 骗到手。
+7. 好友请求改为人工确认：add 只进 addRequests（UI 里 [同意]/[拒绝]），不再静默写 friends.json。
+8. 正版证明用本机 Ed25519 签名，host 核对 hasJoined 的 uuid == proof.uuid，并按 friend id 首次钉住 mcUuid（TOFU），换号会被拒；presence 里的 mcUuid 不再写回 friends.json（那是未认证数据）。
+9. P2 硬化：ReliableStream 接收缓冲上限 256KiB + 越界 ACK 拒绝；ICE 候选只接受 IP 字面量（拒绝主机名/0.0.0.0/组播）且上限 32 个；服务端行长度 64KiB、watch 512 个 id、待处理好友请求 64 条、单会话 ICE 256 条、在线会话 4096；identity.json 写后尽力 chmod 600；客户端请求队列上限 8。
+
+回归：:core:test（9）、:server:test（5，新增 socket 级协议测试）、worker typecheck + smoke（新增 6 条安全断言）、:mod:compileJava 与 ./gradlew build 全绿；Java 客户端 ↔ Worker 的真实 WS 握手仍通过。
+不做：TURN 中继、多人同时进房、皮肤备注。
