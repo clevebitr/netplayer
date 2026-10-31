@@ -86,7 +86,7 @@ Both the host and the guest need the mod. A dedicated server does **not**.
 ## Installation
 
 1. Install NeoForge 21.11.x for Minecraft 1.21.11.
-2. Put `netplayer-1.0.0.jar` into `mods/`.
+2. Put `netplayer-1.0.1.jar` into `mods/`.
 3. Launch the game.
 
 ## Usage
@@ -191,6 +191,35 @@ systemProp.http.proxyPort=7890
 systemProp.https.proxyHost=127.0.0.1
 systemProp.https.proxyPort=7890
 ```
+
+## When it does not connect
+
+**Friends → Settings → Network self test** (网络自检) harvests the addresses this machine would
+advertise and runs one ICE handshake inside the process. The result line tells you which side of the
+problem you are on:
+
+| Self test | Meaning |
+| --- | --- |
+| `IPv6 2 / IPv4 1 (4 cands), ICE ipv6 110ms` | the mod and this machine are fine, the path to the peer is the problem |
+| `candidates 0` | no usable interface (only link-local / Teredo / loopback), fix networking first |
+| `local ICE failed` | a local firewall is blocking even loopback UDP, or the ice4j harvest is broken |
+
+Both sides then check, in this order:
+
+1. `logs/latest.log`: `ICE start` on both ends? If only one side logs it, the join itself never
+   happened (signaling: wrong `signalingUrl`, an 0.1.x server, or a friend that is not on the allow
+   list). `ICE failed: state=... local=[...] remote=[...]` prints both candidate lists; if `local`
+   and `remote` do not contain each other's addresses, the signaling path mangled the exchange.
+2. Windows firewall: inbound UDP for `javaw.exe` / `java.exe` must be allowed. Quick test:
+   `netsh advfirewall set allprofiles state off`, retry, then `netsh advfirewall set allprofiles state on`.
+3. `ping -6 <peer global address>` (ICMPv6 may be filtered even when UDP works, so a failure is a
+   hint, not proof).
+4. Router: many CPEs ship with an IPv6 firewall that drops unsolicited inbound. NAT traversal needs
+   at least one side to accept an inbound check, so turn it off for a test or use TURN.
+5. A TURN relay always works when both peers can reach it; if TURN connects and ICE does not, the
+   path (not the mod) is the problem.
+
+`"iceDebug": true` in `config.json` raises ice4j to INFO, which logs every connectivity check.
 
 ## TURN relay (symmetric NAT / CGNAT)
 

@@ -28,6 +28,9 @@ import java.util.List;
  * the signaling channel; the resulting socket carries the tunnel.
  */
 public final class IceLink implements Link {
+    /** JUL rather than slf4j so this class stays usable outside a Minecraft process (probes, tests). */
+    private static final java.util.logging.Logger LOG = java.util.logging.Logger.getLogger("netplayer-ice");
+
     public static final int MAX_DATAGRAM = 1500;
     /** A peer cannot make us chew through an unbounded candidate list. */
     private static final int MAX_CANDIDATES = 32;
@@ -74,9 +77,7 @@ public final class IceLink implements Link {
     public JsonObject localDescription() {
         JsonArray candidates = new JsonArray();
         for (LocalCandidate candidate : component.getLocalCandidates()) {
-            if (candidate.getTransportAddress().getAddress() != null
-                    && candidate.getTransportAddress().getAddress().isLinkLocalAddress()) {
-                // link local IPv6 is useless once the two peers are not on the same switch
+            if (!usable(candidate.getTransportAddress().getAddress())) {
                 continue;
             }
             JsonObject o = Json.obj();
@@ -91,10 +92,53 @@ public final class IceLink implements Link {
         o.addProperty("ufrag", agent.getLocalUfrag());
         o.addProperty("pwd", agent.getLocalPassword());
         o.add("cands", candidates);
+        if (!loggedCandidates) {
+            loggedCandidates = true;
+            LOG.info("local candidates (" + candidates.size() + "): " + candidates);
+        }
         return o;
     }
 
+    private volatile boolean loggedCandidates;
+
+    /**
+     * Candidates that can plausibly carry a cross network check. Link local IPv6 and IPv4, loopback
+     * and Teredo (2001::/32) only add pairs that always fail, and an always-failing pair makes ICE
+     * spend its whole checklist budget before the good ones are tried.
+     */
+    private static boolean usable(InetAddress address) {
+        if (address == null || address.isAnyLocalAddress() || address.isLoopbackAddress()
+                || address.isLinkLocalAddress() || address.isMulticastAddress()) {
+            return false;
+        }
+        byte[] raw = address.getAddress();
+        if (raw.length == 4) {
+            // 169.254.0.0/16 autoconfiguration addresses are as useless as IPv6 link local
+            return !((raw[0] & 0xff) == 169 && (raw[1] & 0xff) == 254);
+        }
+        if (raw.length == 16) {
+            // Teredo: 2001:0000::/32, a tunnel that is almost never usable for media
+            return !((raw[0] & 0xff) == 0x20 && (raw[1] & 0xff) == 0x01 && raw[2] == 0 && raw[3] == 0);
+        }
+        return true;
+    }
+
+    /** ice4j processing state, for logs when a handshake does not complete. */
+    public String stateName() {
+        return agent.getState() == null ? "unknown" : agent.getState().toString();
+    }
+
+    /** What we heard from the peer, for the failure log. */
+    public String describeRemote() {
+        JsonObject description = lastRemote;
+        return description == null ? "(nothing)" : description.toString();
+    }
+
+    private volatile JsonObject lastRemote;
+
     public void acceptRemote(JsonObject remote) throws Exception {
+        lastRemote = remote;
+        LOG.info("remote candidates: " + remote.get("cands"));
         stream.setRemoteUfrag(Json.str(remote, "ufrag"));
         stream.setRemotePassword(Json.str(remote, "pwd"));
         JsonElement list = remote.get("cands");

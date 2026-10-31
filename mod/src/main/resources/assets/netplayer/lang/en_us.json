@@ -161,5 +161,8 @@
   "netplayer.settings.turn_test_tip": "Tries each configured relay to see which one works",
   "netplayer.settings.turn_probing": "Testing relays...",
   "netplayer.settings.turn_none": "No relay configured",
-  "netplayer.settings.turn_failed": "No relay answered"
+  "netplayer.settings.turn_failed": "No relay answered",
+  "netplayer.settings.ice_test": "Network self test",
+  "netplayer.settings.ice_test_tip": "Lists the candidates this machine would advertise and runs a local ICE handshake",
+  "netplayer.settings.ice_probing": "Testing..."
 }

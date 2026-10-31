@@ -161,5 +161,8 @@
   "netplayer.settings.turn_test_tip": "逐个尝试配置的中继服务器，看哪个能用",
   "netplayer.settings.turn_probing": "正在测试中继…",
   "netplayer.settings.turn_none": "没有配置中继服务器",
-  "netplayer.settings.turn_failed": "所有中继都连不上"
+  "netplayer.settings.turn_failed": "所有中继都连不上",
+  "netplayer.settings.ice_test": "网络自检",
+  "netplayer.settings.ice_test_tip": "列出本机可用于直连的候选地址，并在本机跑一次 ICE 握手",
+  "netplayer.settings.ice_probing": "正在自检…"
 }

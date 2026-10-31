@@ -74,6 +74,12 @@ public final class SettingsScreen extends Screen {
                 .tooltip(Tooltip.create(Component.translatable("netplayer.settings.turn_test_tip")))
                 .build());
 
+        addRenderableWidget(Button.builder(Component.translatable("netplayer.settings.ice_test"),
+                        b -> client.probeIce())
+                .bounds(left, 234, 150, 18)
+                .tooltip(Tooltip.create(Component.translatable("netplayer.settings.ice_test_tip")))
+                .build());
+
         addRenderableWidget(Button.builder(Component.translatable("netplayer.button.done"),
                         b -> minecraft.setScreen(parent))
                 .bounds(left, height - 28, 310, 20).build());
@@ -157,7 +163,13 @@ public final class SettingsScreen extends Screen {
         if (!turn.isEmpty()) {
             Component text = turn.startsWith("netplayer.") ? Component.translatable(turn) : Component.literal(turn);
             boolean good = client.turnProbeOk() || turn.equals("netplayer.settings.turn_probing");
-            graphics.drawString(font, text, left, 232, good ? 0xFF55FF55 : 0xFFFF5555, false);
+            graphics.drawString(font, text, left, 220, good ? 0xFF55FF55 : 0xFFFF5555, false);
+        }
+        String ice = client.iceProbeText();
+        if (!ice.isEmpty()) {
+            Component text = ice.startsWith("netplayer.") ? Component.translatable(ice) : Component.literal(ice);
+            graphics.drawString(font, text, left + 160, 240,
+                    client.iceProbeOk() ? 0xFF55FF55 : 0xFFFF5555, false);
         }
     }
 

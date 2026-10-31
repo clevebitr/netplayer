@@ -98,6 +98,8 @@ public final class NetPlayerClient {
     private volatile String probeResult = "";
     private volatile String turnProbeText = "";
     private volatile boolean turnProbeOk;
+    private volatile String iceProbeText = "";
+    private volatile boolean iceProbeOk;
     private volatile boolean restoreAuth = true;
     private volatile IceState directPending;
     private volatile String lastDirectOffer = "";
@@ -1001,7 +1003,15 @@ public final class NetPlayerClient {
     }
 
     private void iceFailed(IceState state) {
-        LOG.warn("ICE failed, no direct path");
+        if (state != null) {
+            // Candidate lists on both sides are what makes this diagnosable from a user log.
+            LOG.warn("ICE failed: state={} local={} remote={}", state.link.stateName(),
+                    state.link.localDescription().get("cands"), state.link.describeRemote());
+            LOG.warn("if the two peers share an IPv6 prefix but nothing connects, check the Windows");
+            LOG.warn("firewall (inbound UDP for javaw.exe) or configure a TURN relay in settings");
+        } else {
+            LOG.warn("ICE failed before the agent started");
+        }
         if (state == null) {
             notify("netplayer.error.ice_failed");
             return;
@@ -1565,6 +1575,73 @@ public final class NetPlayerClient {
 
     public boolean turnProbeOk() {
         return turnProbeOk;
+    }
+
+    public String iceProbeText() {
+        return iceProbeText;
+    }
+
+    public boolean iceProbeOk() {
+        return iceProbeOk;
+    }
+
+    /**
+     * Local network self test: harvests the candidates this machine would advertise and runs a full
+     * ICE handshake between two agents inside this process. When the loopback handshake works but a
+     * real peer does not connect, the problem is on the path (firewall, CPE IPv6 filter, ISP), not
+     * in the mod. Candidates and the selected pair go to the log.
+     */
+    public void probeIce() {
+        init();
+        iceProbeText = "netplayer.settings.ice_probing";
+        iceProbeOk = false;
+        Thread.ofVirtual().name("netplayer-ice-probe").start(() -> {
+            IceLink a = null;
+            IceLink b = null;
+            try {
+                a = new IceLink(true, config.stunServers);
+                b = new IceLink(false, config.stunServers);
+                JsonObject descA = a.localDescription();
+                JsonObject descB = b.localDescription();
+                int candidates = descA.getAsJsonArray("cands") == null ? 0
+                        : descA.getAsJsonArray("cands").size();
+                int v6 = 0;
+                int v4 = 0;
+                for (JsonElement element : descA.getAsJsonArray("cands")) {
+                    String ip = Json.str(element.getAsJsonObject(), "ip");
+                    if (ip.indexOf(':') >= 0) {
+                        v6++;
+                    } else {
+                        v4++;
+                    }
+                }
+                long started = System.currentTimeMillis();
+                a.acceptRemote(descB);
+                b.acceptRemote(descA);
+                boolean ok = a.awaitConnected(15_000L);
+                long elapsed = System.currentTimeMillis() - started;
+                iceProbeOk = ok;
+                if (ok) {
+                    iceProbeText = "IPv6 " + v6 + " / IPv4 " + v4 + " (" + candidates + " cands), ICE "
+                            + a.pairInfo().kind() + " " + elapsed + "ms";
+                } else {
+                    iceProbeText = "candidates " + candidates + ", local ICE failed (" + elapsed + "ms)";
+                }
+                LOG.info("ICE self test: candidates={} v6={} v4={} ok={} pair={}", candidates, v6, v4, ok,
+                        a.pairInfo());
+            } catch (Exception e) {
+                iceProbeOk = false;
+                iceProbeText = "ICE self test failed: " + e.getMessage();
+                LOG.warn("ICE self test failed", e);
+            } finally {
+                if (a != null) {
+                    a.close();
+                }
+                if (b != null) {
+                    b.close();
+                }
+            }
+        });
     }
 
     /** Tries every configured TURN server once, so a user can tell which one works from here. */
