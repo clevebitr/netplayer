@@ -108,3 +108,11 @@ ice4j 开源版没有 TURN，所以中继只能自己写。范围刻意压到「
 公共 TURN 调研（本机实测，CN 网络）：openrelay.metered.ca 解析失败；a.relay.metered.ca 能应答 401 挑战但用公开的 openrelayproject 凭证被 400 拒（那是 Metered 账户专用主机）；eu-0.turn.peerjs.com 解析失败；free.expressturn.com 无应答。结论：公共共享中继不适合当默认值——不稳定、常被墙、凭证公开等于谁都能蹭。所以 turnServers 默认空，设置页给「测试中继」按钮让人按自己网络实测，README 推荐自建 coturn 或 Cloudflare Realtime TURN（1TB/月免费，需 API 换临时凭证）。
 
 回归：:core:test 16 项（含 mock TURN 的双向 1200B 收发、401 挑战、错误凭证）、:server:test 5 项、worker typecheck + smoke（新增 relay 中继断言）、./gradlew build 通过。未做：TURN over TCP / turns:（TLS），全 UDP 被封的网络仍然无解。
+
+## 2026-10-31 — v1.0.0 发布：CI 支持正式版 tag
+
+发布流程：main 每次 push 仍打 `v1.0-beta-<sha>` 预发布（方便随时下载最新提交），另加 `tags: ['v*']` 触发器——从 tag 构建时版本号取 tag 名、prerelease=false，产物命名 `netplayer-<ver>.jar` / `netplayer-server-<ver>.jar`。mod_version 提到 1.0.0（`-Pmod_version` 仍可被 CI 覆盖）。
+
+验证：本地 `./gradlew build -Pmod_version=1.0.0` 通过；push tag 后两个 workflow 都绿，`gh release view v1.0.0` 显示 isPrerelease=false、Latest，两个 jar 已上传（mod 12004226 B、server 370609 B）。
+
+注意：1.0 与 0.1.x 客户端/信令不互通（presence 载荷与签名基串都变了），线上 worker 必须先 `wrangler deploy` 再发客户端。
