@@ -126,6 +126,12 @@ public final class ReliableStream {
         }
     }
 
+    public boolean isOpen() {
+        synchronized (lock) {
+            return !closed;
+        }
+    }
+
     public void onPacket(byte[] packet) {
         if (packet.length < HEADER) {
             return;

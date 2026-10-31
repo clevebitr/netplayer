@@ -12,6 +12,8 @@ ICE/UDP instead of asking anyone to configure a router.
 - Friends are added with a self contained invite key, no account registration
 - One click "Open to friends" for one friend, several friends or everyone
   (only offered while you are in your own world, never someone else's)
+- Several friends can join the same world at once, each over its own tunnel; the host
+  sees who is connected with the live link quality and can drop one without closing the world
 - Right top toast notifications when a friend comes online or starts playing
 - Join requests are always confirmed by the host, then the guest leaves its current world
   automatically and connects to the host world
@@ -194,7 +196,8 @@ systemProp.https.proxyPort=7890
   an 0.2.x server.
 - No TURN relay in 0.1: symmetric NAT or carrier grade NAT pairs will fail, the mod tells you
   instead of silently hanging. IPv6 (both peers with a global address) or an open UDP port works.
-- One Minecraft connection per tunnel; the guest side uses a random loopback port.
+- One Minecraft connection per tunnel; the guest side uses a random loopback port. A host
+  accepts up to 8 guests at the same time.
 - The transport has a fixed send window and no congestion control, which is fine for Minecraft
   traffic but not a general purpose file transfer.
 

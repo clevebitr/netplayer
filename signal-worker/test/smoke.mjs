@@ -244,6 +244,11 @@ async function main() {
   check("ice is relayed with the sender profile", ice.d.from.id === bob.profile.id && ice.d.ufrag === "uf");
   check("ice no longer carries the 'to' field", !("to" in ice.d));
 
+  // The host drops a guest: same relay path as ice, but the client acts on it.
+  a2.send("kick", { to: bob.profile.id, room: "room-1" });
+  const kick = await b.next("kick");
+  check("kick is relayed with the host profile", kick.d.from.id === alice.profile.id && kick.d.room === "room-1");
+
   console.log("room rejection");
   const carol = identity("Carol");
   const c = await new Client("carol").open();

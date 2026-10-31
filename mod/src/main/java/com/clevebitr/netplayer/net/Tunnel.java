@@ -153,6 +153,11 @@ public final class Tunnel implements AutoCloseable {
         return stream.rttMillis();
     }
 
+    /** False once either side stopped (stream closed, socket lost, link closed). */
+    public boolean isOpen() {
+        return !closed && stream.isOpen();
+    }
+
     private void tickLoop() {
         long lastPing = 0L;
         while (!closed) {

@@ -21,12 +21,22 @@ public final class Heads {
         }
     }
 
+    /** Accepts both {@code 8-4-4-4-12} and the bare 32 hex form. */
+    private static String dashed(String uuid) {
+        String hex = uuid.replace("-", "");
+        if (hex.length() != 32) {
+            return uuid;
+        }
+        return hex.substring(0, 8) + "-" + hex.substring(8, 12) + "-" + hex.substring(12, 16) + "-"
+                + hex.substring(16, 20) + "-" + hex.substring(20);
+    }
+
     private static PlayerSkin skin(String name, String uuid) {
         try {
             Minecraft mc = Minecraft.getInstance();
             ResolvableProfile profile;
             if (uuid != null && !uuid.isEmpty()) {
-                profile = ResolvableProfile.createResolved(new GameProfile(UUID.fromString(uuid), name));
+                profile = ResolvableProfile.createResolved(new GameProfile(UUID.fromString(dashed(uuid)), name));
             } else if (name != null && !name.isEmpty()) {
                 profile = ResolvableProfile.createUnresolved(name);
             } else {

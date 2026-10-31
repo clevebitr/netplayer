@@ -134,7 +134,7 @@ public final class SignalServer implements AutoCloseable {
             case "room_close" -> roomClose(session, msg);
             case "join_req" -> joinRequest(session, msg);
             case "join_ans" -> joinAnswer(session, msg);
-            case "ice" -> relayIce(session, msg);
+            case "ice", "kick" -> relayIce(session, msg);
             default -> {
             }
         }

@@ -51,6 +51,8 @@ public final class NetPlayerClient {
     private static final Logger LOG = LogUtils.getLogger();
     /** Bound the request queues: a flood must not be able to grow them without limit. */
     private static final int MAX_REQUESTS = 8;
+    /** Every guest costs one ICE agent and one tunnel; keep a LAN-sized ceiling. */
+    private static final int MAX_GUESTS = 8;
     private static NetPlayerClient instance;
 
     public static synchronized NetPlayerClient get() {
@@ -82,6 +84,7 @@ public final class NetPlayerClient {
     private final Map<String, Msg> earlyIce = new ConcurrentHashMap<>();
 
     private volatile String joinedHostId = "";
+    private volatile String joinedRoomId = "";
     private volatile long connectingSince;
     private volatile long lastConfigCheck;
     private volatile long configStamp;
@@ -194,6 +197,7 @@ public final class NetPlayerClient {
             connectingSince = 0L;
             joinedHostId = "";
         }
+        reapTunnels();
         boolean connecting = connectingSince != 0L;
         if (mc.level == null && joinFlow == null && !connecting && (!tunnels.isEmpty() || !icePeers.isEmpty())) {
             LOG.info("left the world, closing {} tunnel(s)", tunnels.size());
@@ -206,6 +210,7 @@ public final class NetPlayerClient {
             }
             icePeers.clear();
             joinedHostId = "";
+            joinedRoomId = "";
         }
         progressJoin();
     }
@@ -360,9 +365,23 @@ public final class NetPlayerClient {
     public void setNote(String id, String note) {
         Friend friend = friends.get(id);
         if (friend != null) {
-            friend.note = note == null ? "" : note;
+            friend.note = cleanNote(note);
             saveFriends();
         }
+    }
+
+    /** Notes end up in buttons and titles: keep them one line, printable and short. */
+    private static String cleanNote(String note) {
+        if (note == null) {
+            return "";
+        }
+        StringBuilder sb = new StringBuilder();
+        for (char c : note.strip().toCharArray()) {
+            if (c >= 0x20 && c != 0x7f && sb.length() < 48) {
+                sb.append(c);
+            }
+        }
+        return sb.toString().strip();
     }
 
     public void removeFriend(String id) {
@@ -564,6 +583,24 @@ public final class NetPlayerClient {
                     LOG.warn("join request from {} dropped, queue is full", guest.shortName());
                     return;
                 }
+                Room openRoom = hosting;
+                if (openRoom == null || !openRoom.id().equals(msg.str("room"))) {
+                    // Nothing (or something else) is open here: answer instead of queueing.
+                    send(Msg.of("join_ans").put("to", guest.id).put("room", msg.str("room")).put("accept", false)
+                            .put("reason", "room_closed"));
+                    return;
+                }
+                if (tunnels.containsKey(guest.id)) {
+                    LOG.info("join request from {} ignored, already connected", guest.shortName());
+                    return;
+                }
+                if (tunnels.size() >= MAX_GUESTS) {
+                    LOG.warn("join request from {} refused, {} guests already connected", guest.shortName(),
+                            tunnels.size());
+                    send(Msg.of("join_ans").put("to", guest.id).put("room", msg.str("room")).put("accept", false)
+                            .put("reason", "room_full"));
+                    return;
+                }
                 pendingJoins.add(new Pending(guest, msg.str("room"), msg.str("world"), System.currentTimeMillis(),
                         msg.obj("mc"), msg.str("token")));
                 LOG.info("join request from {} ({})", guest.shortName(), guest.id);
@@ -572,6 +609,7 @@ public final class NetPlayerClient {
             }
             case "join_ans" -> onJoinAnswer(msg);
             case "ice" -> onIce(msg);
+            case "kick" -> onKick(msg);
             case "room_closed" -> {
                 JoinFlow flow = joinFlow;
                 if (flow != null && flow.roomId.equals(msg.str("room"))) {
@@ -790,6 +828,7 @@ public final class NetPlayerClient {
                 case "not_allowed" -> "netplayer.error.not_allowed";
                 case "host_offline" -> "netplayer.error.host_offline";
                 case "not_premium" -> "netplayer.error.not_premium";
+                case "room_full" -> "netplayer.error.room_full";
                 default -> "netplayer.error.room_closed";
             });
             return;
@@ -812,6 +851,7 @@ public final class NetPlayerClient {
         JoinFlow flow = new JoinFlow(host, msg.str("room"), msg.str("world"));
         joinFlow = flow;
         joinedHostId = host.id;
+        joinedRoomId = flow.roomId;
         connectingSince = System.currentTimeMillis();
         Toasts.info(Component.literal(host.shortName()), Component.translatable("netplayer.toast.join_accepted"));
         startIce(host, flow.roomId, true, 0);
@@ -1092,6 +1132,7 @@ public final class NetPlayerClient {
         JoinFlow flow = new JoinFlow(host, roomId, Json.str(payload, "world"));
         joinFlow = flow;
         joinedHostId = host.id;
+        joinedRoomId = roomId;
         connectingSince = System.currentTimeMillis();
         IceState previous = icePeers.remove(host.id);
         if (previous != null) {
@@ -1213,6 +1254,97 @@ public final class NetPlayerClient {
         }
         IceLink.PairInfo pair = state.link.pairInfo();
         return new LinkInfo(true, pair.kind(), tunnel.rttMillis(), pair.local(), pair.remote());
+    }
+
+    // ------------------------------------------------------------------ guests (host side)
+
+    /** One tunnel that is currently up, seen from the host. */
+    public record Guest(String id, String name, String kind, int rttMillis) {
+    }
+
+    /** Guests whose tunnel is still open, newest last. Drives the host's player panel. */
+    public List<Guest> guests() {
+        List<Guest> list = new ArrayList<>();
+        for (Map.Entry<String, Tunnel> entry : tunnels.entrySet()) {
+            if (!entry.getValue().isOpen()) {
+                continue;
+            }
+            IceState state = icePeers.get(entry.getKey());
+            String kind = state == null ? "" : state.link.pairInfo().kind();
+            list.add(new Guest(entry.getKey(), friendName(entry.getKey()), kind, entry.getValue().rttMillis()));
+        }
+        return list;
+    }
+
+    /** Drops one guest: closes the tunnel and asks the guest's client to go back to the title screen. */
+    public void kickGuest(String guestId) {
+        Room room = hosting;
+        if (room == null || guestId == null || guestId.isEmpty()) {
+            return;
+        }
+        Tunnel tunnel = tunnels.remove(guestId);
+        if (tunnel != null) {
+            tunnel.close();
+        }
+        IceState state = icePeers.remove(guestId);
+        if (state != null) {
+            state.close();
+        }
+        send(Msg.of("kick").put("to", guestId).put("room", room.id()));
+        LOG.info("kicked {} from {}", friendName(guestId), room.id());
+    }
+
+    /** The host closed our tunnel: leave the world instead of hanging on a dead connection. */
+    private void onKick(Msg msg) {
+        Profile from = Profile.fromJson(msg.obj("from"));
+        String host = joinedHostId;
+        if (!from.selfCertified() || host.isEmpty() || !host.equals(from.id)) {
+            return;
+        }
+        if (!joinedRoomId.isEmpty() && !joinedRoomId.equals(msg.str("room"))) {
+            return;
+        }
+        LOG.info("host closed our tunnel");
+        leaveWorld("netplayer.error.kicked");
+    }
+
+    /** Closes our side of the link and drops out of the world (client thread work). */
+    private void leaveWorld(String messageKey) {
+        String host = joinedHostId;
+        joinedHostId = "";
+        joinedRoomId = "";
+        joinFlow = null;
+        connectingSince = 0L;
+        Tunnel tunnel = tunnels.remove(host);
+        if (tunnel != null) {
+            tunnel.close();
+        }
+        IceState state = icePeers.remove(host);
+        if (state != null) {
+            state.close();
+        }
+        Minecraft.getInstance().execute(() -> {
+            Toasts.info(Component.translatable("netplayer.title"), Component.translatable(messageKey));
+            if (mc.level != null) {
+                mc.disconnect(new TitleScreen(), false);
+            }
+        });
+    }
+
+    /** Forgets tunnels whose stream died, so a departed guest does not linger in the panel. */
+    private void reapTunnels() {
+        for (Map.Entry<String, Tunnel> entry : tunnels.entrySet()) {
+            if (entry.getValue().isOpen()) {
+                continue;
+            }
+            if (tunnels.remove(entry.getKey(), entry.getValue())) {
+                LOG.info("tunnel with {} closed", friendName(entry.getKey()));
+                IceState state = icePeers.remove(entry.getKey());
+                if (state != null) {
+                    state.close();
+                }
+            }
+        }
     }
 
     public String signalingHost() {
@@ -1379,20 +1511,25 @@ public final class NetPlayerClient {
             LOG.warn("premium check rejected: mojang does not know serverId {}", serverId);
             return false;
         }
-        String mojangId = Json.str(profile, "id").replace("-", "");
-        if (mojangId.isEmpty() || !mojangId.equalsIgnoreCase(uuid.replace("-", ""))) {
+        String mojangId = dashless(Json.str(profile, "id"));
+        if (mojangId.isEmpty() || !mojangId.equalsIgnoreCase(dashless(uuid))) {
             LOG.warn("premium check rejected: proof uuid does not match the mojang profile");
             return false;
         }
         Friend known = friends.get(peer.id);
         if (known != null && known.mcUuid != null && !known.mcUuid.isEmpty()
-                && !known.mcUuid.replace("-", "").equalsIgnoreCase(mojangId)) {
+                && !dashless(known.mcUuid).equalsIgnoreCase(mojangId)) {
             LOG.warn("premium check rejected: {} switched minecraft account (pinned {})", peer.id, known.mcUuid);
             return false;
         }
         LOG.info("premium check for {} ({}) -> ok", name, peer.id);
-        pinMcAccount(peer.id, name, mojangId);
+        // Keep the dashed form: the head renderer wants a real UUID, comparisons go dashless.
+        pinMcAccount(peer.id, name, uuid.isEmpty() ? mojangId : uuid);
         return true;
+    }
+
+    private static String dashless(String uuid) {
+        return uuid == null ? "" : uuid.replace("-", "");
     }
 
     /** Remembers which Minecraft account sits behind a NetPlayer identity (trust on first use). */

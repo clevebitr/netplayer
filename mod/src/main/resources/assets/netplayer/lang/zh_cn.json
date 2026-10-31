@@ -146,5 +146,12 @@
   "netplayer.toast.friend_request": "想加你为好友",
   "netplayer.friends.add_request": "%s 想加你为好友",
   "netplayer.friends.request_tip": "同意后才会出现在你的好友列表里",
-  "netplayer.error.key_too_old": "这个码来自旧版本，请让对方重新生成"
+  "netplayer.error.key_too_old": "这个码来自旧版本，请让对方重新生成",
+  "netplayer.error.room_full": "房间人数已满",
+  "netplayer.error.kicked": "房主断开了你的连接",
+  "netplayer.open.guests": "已连接的好友",
+  "netplayer.open.no_guests": "还没有好友连进来",
+  "netplayer.open.guest_row": "%s  ·  %s",
+  "netplayer.open.kick": "断开",
+  "netplayer.open.kick_tip": "断开这条隧道，对方会回到主菜单"
 }

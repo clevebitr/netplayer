@@ -80,3 +80,16 @@ DO 实现要点：单实例 idFromName("global") 模拟 Java 的 synchronized �
 
 回归：:core:test（9）、:server:test（5，新增 socket 级协议测试）、worker typecheck + smoke（新增 6 条安全断言）、:mod:compileJava 与 ./gradlew build 全绿；Java 客户端 ↔ Worker 的真实 WS 握手仍通过。
 不做：TURN 中继、多人同时进房、皮肤备注。
+
+## 2026-10-31 — M3 功能：多人同时进房 + 房主连接面板 + 备注/头像修正
+
+多人进房本来在架构上就是通的（tunnels/icePeers 都按好友 id 分表，每客一条 Tunnel + 每客一次 publishServer LAN 连接），真正缺的是上限、回收、可观测性和 UI 假限制：
+
+1. 房主侧：guests() 返回在线隧道（名字/链路/RTT），kickGuest() 关隧道+关 ICE+发 kick；MAX_GUESTS=8；join_req 时若未开放/房间不匹配直接回 room_closed、已在隧道里的重复请求忽略、满员回 room_full（服务端不参与，房主自己判）。
+2. kick 走与 ice 相同的中继（服务端一行 case，Java/TS 皆是），因为 relayIce 保留原消息类型。客端 onKick 要求 from 自证身份 == joinedHostId 且 room == joinedRoomId，然后 leaveWorld() 在客户端线程 disconnect 回主菜单。加 joinedRoomId 的目的就是防止旧世界的 kick 误伤新会话。
+3. 死隧道回收：Tunnel.isOpen()（closed && !stream.isOpen()），tick 里 reapTunnels() 把 end 掉的隧道从 tunnels/icePeers 里摘掉——之前客端直接退出世界后房主侧会一直显示"已连接"。
+4. UI：好友列表不再硬性只显示 2 条加入请求（改为按可用行数）；对好友开放界面在房主态显示「已连接的好友」两行 + [断开]，布局重排避免与正版状态行/底部按钮重叠。
+5. 备注/头像：pinMcAccount 之前存的是 dashless uuid，Heads 里 UUID.fromString 直接抛异常导致正版好友永远没头像。现在持久化带连字符的原样 uuid（比较一律 dashless），Heads 也兼容 32 位裸 hex。setNote 清洗控制字符并限 48 字符。
+
+回归：:core:test 9、:server:test 5、worker smoke 全绿（新增 kick 中继断言），./gradlew build 通过。
+待办：TURN 中继（ice4j 对 RFC8656 支持很弱，需要自写 allocate/channel-data 客户端，或改用自建 coturn + 自定义 harvester），这一条要单独立里程碑。

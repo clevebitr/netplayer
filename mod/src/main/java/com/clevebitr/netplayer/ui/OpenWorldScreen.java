@@ -33,6 +33,24 @@ public final class OpenWorldScreen extends Screen {
         int left = width / 2 - 155;
 
         if (client.hosting()) {
+            // Host panel: everyone whose tunnel is up right now, with a way to drop them again.
+            List<NetPlayerClient.Guest> guests = client.guests();
+            int y = 150;
+            for (int i = 0; i < Math.min(guests.size(), 2); i++) {
+                NetPlayerClient.Guest guest = guests.get(i);
+                Button info = Button.builder(guestLabel(guest), b -> {
+                }).bounds(left, y, 230, 20).build();
+                info.active = false;
+                addRenderableWidget(info);
+                addRenderableWidget(Button.builder(Component.translatable("netplayer.open.kick"), b -> {
+                    client.kickGuest(guest.id());
+                    minecraft.setScreen(new OpenWorldScreen(parent));
+                }).bounds(left + 234, y, 76, 20)
+                        .tooltip(Tooltip.create(Component.translatable("netplayer.open.kick_tip")))
+                        .build());
+                y += 20;
+            }
+
             addRenderableWidget(Button.builder(Component.translatable("netplayer.open.copy"), b -> {
                 minecraft.keyboardHandler.setClipboard(client.myRoomKey());
                 note = Component.translatable("netplayer.add.copied");
@@ -142,6 +160,19 @@ public final class OpenWorldScreen extends Screen {
         return Component.literal((allowed.contains(friend.profile.id) ? "[x] " : "[ ] ") + friend.label());
     }
 
+    private Component guestLabel(NetPlayerClient.Guest guest) {
+        Component link = Component.translatable(switch (guest.kind()) {
+            case "lan" -> "netplayer.link.lan";
+            case "ipv6" -> "netplayer.link.ipv6";
+            case "relay" -> "netplayer.link.relay";
+            case "punch" -> "netplayer.link.punch";
+            default -> "netplayer.link.unknown";
+        });
+        String detail = guest.rttMillis() < 0 ? link.getString()
+                : link.getString() + " · " + guest.rttMillis() + "ms";
+        return Component.translatable("netplayer.open.guest_row", guest.name(), detail);
+    }
+
     @Override
     public void render(GuiGraphics graphics, int mouseX, int mouseY, float partialTick) {
         super.render(graphics, mouseX, mouseY, partialTick);
@@ -151,7 +182,11 @@ public final class OpenWorldScreen extends Screen {
             graphics.drawCenteredString(font, Component.translatable("netplayer.open.is_open",
                     client.room().world()), width / 2, 36, 0xFF55FF55);
             graphics.drawString(font, Component.translatable(client.room().premium()
-                    ? "netplayer.open.premium_on" : "netplayer.open.premium_off"), left, 176, 0xFF80C0FF, false);
+                    ? "netplayer.open.premium_on" : "netplayer.open.premium_off"), left, 132, 0xFF80C0FF, false);
+            List<NetPlayerClient.Guest> guests = client.guests();
+            graphics.drawString(font, Component.translatable(guests.isEmpty()
+                            ? "netplayer.open.no_guests" : "netplayer.open.guests"),
+                    left, 139, 0xFFFFFF55, false);
         } else if (!note.getString().isEmpty()) {
             graphics.drawCenteredString(font, note, width / 2, 40, 0xFFFFAA00);
         }
@@ -160,7 +195,7 @@ public final class OpenWorldScreen extends Screen {
                     left, 218, 0xFFFF8855, false);
         }
         if (!note.getString().isEmpty() && client.hosting()) {
-            graphics.drawCenteredString(font, note, width / 2, height - 70, 0xFFFFAA00);
+            graphics.drawCenteredString(font, note, width / 2, 194, 0xFFFFAA00);
         }
         if (!client.connected()) {
             graphics.drawCenteredString(font, Component.translatable("netplayer.status.direct_mode"),

@@ -115,7 +115,7 @@ public final class FriendListScreen extends Screen {
         }
 
         for (NetPlayerClient.Pending pending : client.pendingJoins()) {
-            if (used >= 2 || used >= limit) {
+            if (used >= limit) {
                 break;
             }
             used++;
