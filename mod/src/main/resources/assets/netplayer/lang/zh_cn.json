@@ -164,5 +164,11 @@
   "netplayer.settings.turn_failed": "所有中继都连不上",
   "netplayer.settings.ice_test": "网络自检",
   "netplayer.settings.ice_test_tip": "列出本机可用于直连的候选地址，并在本机跑一次 ICE 握手",
-  "netplayer.settings.ice_probing": "正在自检…"
+  "netplayer.settings.ice_probing": "正在自检…",
+  "netplayer.error.connect_timeout": "进入失败：握手超时，请重试",
+  "netplayer.error.connect_failed": "进入失败：无法连上隧道",
+  "netplayer.error.link_lost": "与房主的连接已断开",
+  "netplayer.error.already_joining": "正在进入中，请稍候",
+  "netplayer.detail.joining": "正在进入…",
+  "netplayer.toast.guest_left": "离开了你的世界"
 }

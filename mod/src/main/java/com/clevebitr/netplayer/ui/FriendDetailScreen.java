@@ -52,10 +52,11 @@ public final class FriendDetailScreen extends Screen {
                 .bounds(left, 172, 150, 20)
                 .tooltip(Tooltip.create(Component.translatable("netplayer.friends.join_tip")))
                 .build();
-        boolean inside = client.insideWorldOf(friendId);
-        join.active = client.presence(friendId).openTo(client.me().id) && !inside;
-        if (inside) {
+        join.active = client.canJoin(friendId);
+        if (client.insideWorldOf(friendId)) {
             join.setTooltip(Tooltip.create(Component.translatable("netplayer.detail.already_inside")));
+        } else if (client.joiningFriend(friendId)) {
+            join.setTooltip(Tooltip.create(Component.translatable("netplayer.error.already_joining")));
         }
         addRenderableWidget(join);
 
@@ -103,8 +104,11 @@ public final class FriendDetailScreen extends Screen {
     }
 
     private Component presenceText(Presence presence) {
-        if (client.insideWorldOf(friendId)) {
-            return Component.translatable("netplayer.detail.inside");
+        // The local join state wins over whatever the relay says: it is the only thing that knows
+        // whether we are actually inside, still connecting, or freshly failed.
+        String stateKey = client.joinStateKey(friendId);
+        if (stateKey != null) {
+            return Component.translatable(stateKey);
         }
         if (!presence.online()) {
             return Component.translatable("netplayer.status.offline");

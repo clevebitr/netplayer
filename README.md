@@ -86,7 +86,7 @@ Both the host and the guest need the mod. A dedicated server does **not**.
 ## Installation
 
 1. Install NeoForge 21.11.x for Minecraft 1.21.11.
-2. Put `netplayer-1.0.2.jar` into `mods/`.
+2. Put `netplayer-1.0.3.jar` into `mods/`.
 3. Launch the game.
 
 ## Usage
@@ -201,6 +201,31 @@ throw `Key 'ice4j.consent-freshness.interval' not found in source 'typesafe conf
 like a dead network (`ICE failed before the agent started`). The constructor now pins the context
 loader to its own class loader for the whole ICE setup. If you see that exception on 1.0.0/1.0.1,
 update the jar; nothing else has to change.
+
+## Session state
+
+Joining somebody's world is a small state machine instead of a set of scattered flags, because a
+half-finished join used to leave stale state behind: the guest kept thinking it was inside a world
+that never loaded, and the host kept listing a guest that had long left.
+
+```
+ICE  ->  CONNECTING  ->  INSIDE  ->  ended
+ ^          ^              |
+ |          |              +-- mc.level gone        -> leave (sends `leave` to the host)
+ +----------+-- timeout / ICE failure / kick / link lost -> end + toast
+```
+
+- The guest holds one `JoinSession` (host, room, stage). Every exit - failure, kick, leaving the
+  world, a dead link - goes through the same `endSession`, which closes the tunnel and the ICE
+  agent, clears the UI state and (when it was a real attempt) tells the host with a `leave` message.
+- A join that never completes can no longer look successful: `CONNECTING` only becomes `INSIDE`
+  after the vanilla client left its own world and then showed a world, and a connection that drops
+  again fails immediately (plus a 20s ceiling, 60s for the ICE phase).
+- Liveness is measured, not assumed: both ends ping every 2s and answer, and a tunnel that has been
+  silent for 15s is closed and removed on both sides. That covers a guest that quits, crashes, or
+  loses the network - the host panel and the friend list stop showing a ghost within seconds.
+- A guest that says goodbye sends `leave`, so the host reacts immediately instead of waiting for the
+  watchdog (one extra relayed message type, no server state).
 
 ## When it does not connect
 

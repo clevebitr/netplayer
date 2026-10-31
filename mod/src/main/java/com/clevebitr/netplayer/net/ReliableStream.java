@@ -136,6 +136,7 @@ public final class ReliableStream {
         if (packet.length < HEADER) {
             return;
         }
+        lastHeardAt = System.currentTimeMillis();
         int type = packet[0];
         int seq = readInt(packet, 1);
         int ack = readInt(packet, 5);
@@ -176,6 +177,17 @@ public final class ReliableStream {
     }
 
     private volatile int rttMillis = -1;
+    /** Timestamp of the last packet that arrived, whatever its type: liveness, not throughput. */
+    private volatile long lastHeardAt = System.currentTimeMillis();
+
+    /**
+     * True when the peer stopped answering. Both ends ping every two seconds and the other side
+     * answers, so silence for several ping intervals means the tunnel is dead (guest quit, network
+     * gone) and must be cleaned up instead of lingering as "connected".
+     */
+    public boolean isStale(long now, long timeoutMs) {
+        return !closed && now - lastHeardAt > timeoutMs;
+    }
 
     public int rttMillis() {
         return rttMillis;

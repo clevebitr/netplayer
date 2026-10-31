@@ -164,5 +164,11 @@
   "netplayer.settings.turn_failed": "No relay answered",
   "netplayer.settings.ice_test": "Network self test",
   "netplayer.settings.ice_test_tip": "Lists the candidates this machine would advertise and runs a local ICE handshake",
-  "netplayer.settings.ice_probing": "Testing..."
+  "netplayer.settings.ice_probing": "Testing...",
+  "netplayer.error.connect_timeout": "Could not get in: the handshake timed out",
+  "netplayer.error.connect_failed": "Could not get in: the tunnel did not accept the connection",
+  "netplayer.error.link_lost": "Lost the connection to the host",
+  "netplayer.error.already_joining": "Already joining, one moment",
+  "netplayer.detail.joining": "joining...",
+  "netplayer.toast.guest_left": "left your world"
 }

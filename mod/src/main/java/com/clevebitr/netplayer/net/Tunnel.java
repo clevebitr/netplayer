@@ -163,6 +163,11 @@ public final class Tunnel implements AutoCloseable {
         return !closed && stream.isOpen();
     }
 
+    /** The peer has been silent for longer than {@code timeoutMs}. */
+    public boolean isStale(long now, long timeoutMs) {
+        return closed || stream.isStale(now, timeoutMs);
+    }
+
     private void tickLoop() {
         long lastPing = 0L;
         while (!closed) {

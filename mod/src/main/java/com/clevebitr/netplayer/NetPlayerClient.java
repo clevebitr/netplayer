@@ -58,6 +58,12 @@ public final class NetPlayerClient {
     private static final int MAX_REQUESTS = 8;
     /** Every guest costs one ICE agent and one tunnel; keep a LAN-sized ceiling. */
     private static final int MAX_GUESTS = 8;
+    /** No datagram from the peer for this long means the tunnel is dead, not idle. */
+    private static final long LINK_STALE_MS = 15_000L;
+    /** ICE plus the relay fallback may take a while; this is the "nothing is happening" limit. */
+    private static final long JOIN_TIMEOUT_MS = 60_000L;
+    /** The Minecraft handshake runs over loopback, so it either works at once or not at all. */
+    private static final long CONNECT_TIMEOUT_MS = 20_000L;
     private static NetPlayerClient instance;
 
     public static synchronized NetPlayerClient get() {
@@ -89,9 +95,8 @@ public final class NetPlayerClient {
     private final Map<String, Msg> earlyIce = new ConcurrentHashMap<>();
     private final Map<String, Msg> earlyRelay = new ConcurrentHashMap<>();
 
-    private volatile String joinedHostId = "";
-    private volatile String joinedRoomId = "";
-    private volatile long connectingSince;
+    /** The single source of truth for "am I entering / inside somebody's world". */
+    private volatile JoinSession session;
     private volatile long lastConfigCheck;
     private volatile long configStamp;
     private volatile String lastConnectError = "";
@@ -113,7 +118,6 @@ public final class NetPlayerClient {
     private String sentPresence = "";
     private volatile boolean watchDirty = true;
     private volatile Room hosting;
-    private volatile JoinFlow joinFlow;
     private boolean initialized;
 
     private NetPlayerClient(Minecraft mc) {
@@ -200,28 +204,8 @@ public final class NetPlayerClient {
             LOG.info("world closed by the host, telling friends");
             closeWorld(true);
         }
-        if (mc.level != null) {
-            connectingSince = 0L;
-        } else if (connectingSince != 0L && now - connectingSince > 60_000L) {
-            LOG.info("join attempt timed out");
-            connectingSince = 0L;
-            joinedHostId = "";
-        }
-        reapTunnels();
-        boolean connecting = connectingSince != 0L;
-        if (mc.level == null && joinFlow == null && !connecting && (!tunnels.isEmpty() || !icePeers.isEmpty())) {
-            LOG.info("left the world, closing {} tunnel(s)", tunnels.size());
-            for (Tunnel tunnel : tunnels.values()) {
-                tunnel.close();
-            }
-            tunnels.clear();
-            for (IceState state : icePeers.values()) {
-                state.close();
-            }
-            icePeers.clear();
-            joinedHostId = "";
-            joinedRoomId = "";
-        }
+        refreshTunnels(now);
+        trackSession(now);
         progressJoin();
     }
 
@@ -620,10 +604,11 @@ public final class NetPlayerClient {
             case "join_ans" -> onJoinAnswer(msg);
             case "ice" -> onIce(msg);
             case "relay" -> onRelay(msg);
+            case "leave" -> onLeave(msg);
             case "kick" -> onKick(msg);
             case "room_closed" -> {
-                JoinFlow flow = joinFlow;
-                if (flow != null && flow.roomId.equals(msg.str("room"))) {
+                JoinSession current = session;
+                if (current != null && current.roomId.equals(msg.str("room"))) {
                     failJoin("netplayer.error.room_closed");
                 }
             }
@@ -734,17 +719,41 @@ public final class NetPlayerClient {
     // ------------------------------------------------------------------ joining
 
     public boolean canJoin(String friendId) {
-        return presence(friendId).openTo(me().id) && !insideWorldOf(friendId);
+        return presence(friendId).openTo(me().id) && !insideWorldOf(friendId) && !joiningFriend(friendId);
     }
 
-    /** True while we already play inside that friend's world. */
+    /** True only once the guest is really playing inside that friend's world. */
     public boolean insideWorldOf(String friendId) {
-        return friendId != null && !friendId.isEmpty() && friendId.equals(joinedHostId);
+        JoinSession current = session;
+        return current != null && current.stage == JoinSession.Stage.INSIDE
+                && friendId != null && current.host.id.equals(friendId);
+    }
+
+    /** True while a join to that friend is being negotiated (ICE, or the Minecraft connect). */
+    public boolean joiningFriend(String friendId) {
+        JoinSession current = session;
+        return current != null && current.stage != JoinSession.Stage.INSIDE
+                && friendId != null && current.host.id.equals(friendId);
+    }
+
+    /** Null when there is nothing to say, else a translation key describing the local join state. */
+    public String joinStateKey(String friendId) {
+        if (insideWorldOf(friendId)) {
+            return "netplayer.detail.inside";
+        }
+        if (joiningFriend(friendId)) {
+            return "netplayer.detail.joining";
+        }
+        return null;
     }
 
     public void requestJoin(String friendId) {
         if (insideWorldOf(friendId)) {
             notify("netplayer.error.already_inside");
+            return;
+        }
+        if (joiningFriend(friendId)) {
+            notify("netplayer.error.already_joining");
             return;
         }
         Presence presence = presence(friendId);
@@ -859,40 +868,134 @@ public final class NetPlayerClient {
             host = known.profile;
         }
         storeFriend(host);
-        JoinFlow flow = new JoinFlow(host, msg.str("room"), msg.str("world"));
-        joinFlow = flow;
-        joinedHostId = host.id;
-        joinedRoomId = flow.roomId;
-        connectingSince = System.currentTimeMillis();
+        JoinSession created = beginSession(host, msg.str("room"), msg.str("world"));
         Toasts.info(Component.literal(host.shortName()), Component.translatable("netplayer.toast.join_accepted"));
-        startIce(host, flow.roomId, true, 0);
+        startIce(host, created.roomId, true, 0);
     }
 
+    // ------------------------------------------------------------------ join session
+
+    /**
+     * Starts (or replaces) the attempt to enter somebody's world. Every way out of a join - failure,
+     * leave, kick, dead link - goes through {@link #endSession(String, boolean)} so no stale
+     * "you are inside" or "guest is connected" state can survive.
+     */
+    private JoinSession beginSession(Profile host, String roomId, String world) {
+        endSession(null, true);
+        JoinSession created = new JoinSession(host, roomId, world);
+        session = created;
+        LOG.info("join session start with {} room {}", host.shortName(), roomId);
+        return created;
+    }
+
+    private void endSession(String messageKey, boolean tellHost) {
+        JoinSession current = session;
+        session = null;
+        if (current != null) {
+            Tunnel tunnel = tunnels.remove(current.host.id);
+            if (tunnel != null) {
+                tunnel.close();
+            }
+            IceState state = icePeers.remove(current.host.id);
+            if (state != null) {
+                state.close();
+            }
+            if (tellHost && !current.roomId.isEmpty()) {
+                // Fast path for the host: it drops the tunnel and the pending request right away
+                // instead of waiting for the liveness watchdog.
+                send(Msg.of("leave").put("to", current.host.id).put("room", current.roomId));
+            }
+            boolean wasInside = current.stage == JoinSession.Stage.INSIDE;
+            LOG.info("join session with {} ended at stage {} ({})", current.host.shortName(),
+                    current.stage, messageKey == null ? "left" : messageKey);
+            if (wasInside) {
+                Minecraft.getInstance().execute(() -> {
+                    if (mc.level != null) {
+                        mc.disconnect(new TitleScreen(), false);
+                    }
+                });
+            }
+        }
+        if (messageKey != null) {
+            Minecraft.getInstance().execute(() -> Toasts.info(Component.translatable("netplayer.title"),
+                    Component.translatable(messageKey)));
+        }
+    }
+
+    /** Kept for the pre-session failures: a declined request, a closed room, a bad answer. */
     private void failJoin(String messageKey) {
-        joinFlow = null;
-        joinedHostId = "";
-        connectingSince = 0L;
-        Toasts.info(Component.translatable("netplayer.title"), Component.translatable(messageKey));
+        endSession(messageKey, true);
+    }
+
+    /** Advances the session through ICE -> connecting -> inside, and kills it when it goes quiet. */
+    private void trackSession(long now) {
+        JoinSession current = session;
+        if (current == null) {
+            return;
+        }
+        Tunnel tunnel = tunnels.get(current.host.id);
+        if (tunnel != null && tunnel.isStale(now, LINK_STALE_MS)) {
+            LOG.warn("no packets from {} for {}ms", current.host.shortName(), LINK_STALE_MS);
+            endSession("netplayer.error.link_lost", false);
+            return;
+        }
+        switch (current.stage) {
+            case ICE -> {
+                if (now - current.startedAt > JOIN_TIMEOUT_MS) {
+                    endSession("netplayer.error.connect_timeout", true);
+                }
+            }
+            case CONNECTING -> {
+                if (mc.level != null) {
+                    // A slow world load keeps the level null for a while, so the transition to
+                    // INSIDE is only trusted after we actually saw the level go away first.
+                    if (current.sawEmptyLevel) {
+                        current.stage(JoinSession.Stage.INSIDE);
+                        LOG.info("inside {}'s world", current.host.shortName());
+                    }
+                } else {
+                    current.sawEmptyLevel = true;
+                    // Fast path for a refused/failed connection: the client had a connection and
+                    // dropped it again without ever showing a world.
+                    if (current.sawConnection && mc.getConnection() == null
+                            && now - current.stageSince > 1000L) {
+                        endSession("netplayer.error.connect_failed", true);
+                    }
+                }
+                if (mc.getConnection() != null) {
+                    current.sawConnection = true;
+                }
+                if (current.stage == JoinSession.Stage.CONNECTING
+                        && now - current.stageSince > CONNECT_TIMEOUT_MS) {
+                    endSession("netplayer.error.connect_timeout", true);
+                }
+            }
+            case INSIDE -> {
+                if (mc.level == null) {
+                    LOG.info("left {}'s world", current.host.shortName());
+                    endSession(null, true);
+                } else if (tunnel == null) {
+                    endSession("netplayer.error.link_lost", false);
+                }
+            }
+        }
     }
 
     private void progressJoin() {
-        JoinFlow flow = joinFlow;
-        if (flow == null || flow.port <= 0) {
+        JoinSession current = session;
+        if (current == null || current.stage != JoinSession.Stage.ICE || current.port <= 0) {
             return;
         }
-        if (mc.level != null && flow.disconnectTicks == 0) {
+        if (mc.level != null && !current.disconnected) {
+            current.disconnected = true;
             mc.disconnect(new TitleScreen(), false);
-            flow.disconnectTicks = 20;
             return;
         }
-        if (flow.disconnectTicks > 0) {
-            flow.disconnectTicks--;
-            return;
-        }
-        joinFlow = null;
-        ServerAddress address = new ServerAddress("127.0.0.1", flow.port);
-        ServerData data = new ServerData("NetPlayer: " + flow.host.shortName(), address.toString(),
+        current.stage(JoinSession.Stage.CONNECTING);
+        ServerAddress address = new ServerAddress("127.0.0.1", current.port);
+        ServerData data = new ServerData("NetPlayer: " + current.host.shortName(), address.toString(),
                 ServerData.Type.OTHER);
+        LOG.info("connecting to {}'s world on 127.0.0.1:{}", current.host.shortName(), current.port);
         ConnectScreen.startConnecting(new TitleScreen(), mc, address, data, false, null);
     }
 
@@ -988,9 +1091,9 @@ public final class NetPlayerClient {
                     Tunnel tunnel = Tunnel.guest(state.link, key);
                     tunnel.start();
                     tunnels.put(from.id, tunnel);
-                    JoinFlow flow = joinFlow;
-                    if (flow != null) {
-                        flow.port = tunnel.localPort();
+                    JoinSession current = session;
+                    if (current != null && current.host.id.equals(from.id)) {
+                        current.port = tunnel.localPort();
                     }
                 } else {
                     Tunnel tunnel = Tunnel.host(state.link, key, state.lanPort);
@@ -1025,8 +1128,8 @@ public final class NetPlayerClient {
         notify("netplayer.error.ice_failed");
         state.close();
         icePeers.values().remove(state);
-        if (joinFlow != null) {
-            joinFlow = null;
+        if (state.controlling) {
+            endSession(null, true);
         }
     }
 
@@ -1155,9 +1258,9 @@ public final class NetPlayerClient {
             tunnel.start();
             tunnels.put(state.peer.id, tunnel);
             if (state.controlling) {
-                JoinFlow flow = joinFlow;
-                if (flow != null) {
-                    flow.port = tunnel.localPort();
+                JoinSession current = session;
+                if (current != null && current.host.id.equals(state.peer.id)) {
+                    current.port = tunnel.localPort();
                 }
             }
             LOG.info("relay tunnel up with {}", state.peer.shortName());
@@ -1304,11 +1407,7 @@ public final class NetPlayerClient {
             return "netplayer.error.not_premium_local";
         }
         storeFriend(host);
-        JoinFlow flow = new JoinFlow(host, roomId, Json.str(payload, "world"));
-        joinFlow = flow;
-        joinedHostId = host.id;
-        joinedRoomId = roomId;
-        connectingSince = System.currentTimeMillis();
+        JoinSession flow = beginSession(host, roomId, Json.str(payload, "world"));
         IceState previous = icePeers.remove(host.id);
         if (previous != null) {
             previous.close();
@@ -1470,54 +1569,71 @@ public final class NetPlayerClient {
     }
 
     /** The host closed our tunnel: leave the world instead of hanging on a dead connection. */
+    /** The host closed our tunnel: end the session and let it disconnect us. */
     private void onKick(Msg msg) {
         Profile from = Profile.fromJson(msg.obj("from"));
-        String host = joinedHostId;
-        if (!from.selfCertified() || host.isEmpty() || !host.equals(from.id)) {
+        JoinSession current = session;
+        if (current == null || !from.selfCertified() || !current.host.id.equals(from.id)) {
             return;
         }
-        if (!joinedRoomId.isEmpty() && !joinedRoomId.equals(msg.str("room"))) {
+        if (!current.roomId.isEmpty() && !current.roomId.equals(msg.str("room"))) {
             return;
         }
         LOG.info("host closed our tunnel");
-        leaveWorld("netplayer.error.kicked");
+        endSession("netplayer.error.kicked", false);
     }
 
-    /** Closes our side of the link and drops out of the world (client thread work). */
-    private void leaveWorld(String messageKey) {
-        String host = joinedHostId;
-        joinedHostId = "";
-        joinedRoomId = "";
-        joinFlow = null;
-        connectingSince = 0L;
-        Tunnel tunnel = tunnels.remove(host);
-        if (tunnel != null) {
-            tunnel.close();
+    /** A guest says goodbye: drop it now instead of waiting for the liveness watchdog. */
+    private void onLeave(Msg msg) {
+        Profile from = Profile.fromJson(msg.obj("from"));
+        if (!from.selfCertified()) {
+            return;
         }
-        IceState state = icePeers.remove(host);
+        Room room = hosting;
+        if (room != null && !room.id().equals(msg.str("room"))) {
+            return;
+        }
+        pendingJoins.removeIf(pending -> pending.guest().id.equals(from.id));
+        IceState state = icePeers.remove(from.id);
         if (state != null) {
             state.close();
         }
-        Minecraft.getInstance().execute(() -> {
-            Toasts.info(Component.translatable("netplayer.title"), Component.translatable(messageKey));
-            if (mc.level != null) {
-                mc.disconnect(new TitleScreen(), false);
+        Tunnel tunnel = tunnels.remove(from.id);
+        if (tunnel != null) {
+            tunnel.close();
+            LOG.info("{} left the world", from.shortName());
+            if (hosting != null) {
+                Toasts.info(Component.literal(from.shortName()),
+                        Component.translatable("netplayer.toast.guest_left"));
             }
-        });
+        }
     }
 
-    /** Forgets tunnels whose stream died, so a departed guest does not linger in the panel. */
-    private void reapTunnels() {
+    /**
+     * Keeps the tunnel map honest: a closed stream, or one that stopped answering pings, is removed
+     * together with its ICE state, so the host panel and the friend list cannot show a ghost.
+     */
+    private void refreshTunnels(long now) {
         for (Map.Entry<String, Tunnel> entry : tunnels.entrySet()) {
-            if (entry.getValue().isOpen()) {
+            Tunnel tunnel = entry.getValue();
+            boolean open = tunnel.isOpen();
+            if (open && !tunnel.isStale(now, LINK_STALE_MS)) {
                 continue;
             }
-            if (tunnels.remove(entry.getKey(), entry.getValue())) {
-                LOG.info("tunnel with {} closed", friendName(entry.getKey()));
-                IceState state = icePeers.remove(entry.getKey());
-                if (state != null) {
-                    state.close();
-                }
+            if (!tunnels.remove(entry.getKey(), tunnel)) {
+                continue;
+            }
+            tunnel.close();
+            IceState state = icePeers.remove(entry.getKey());
+            if (state != null) {
+                state.close();
+            }
+            pendingJoins.removeIf(pending -> pending.guest().id.equals(entry.getKey()));
+            LOG.info("tunnel with {} dropped ({})", friendName(entry.getKey()),
+                    open ? "silent" : "closed");
+            if (hosting != null) {
+                Toasts.info(Component.literal(friendName(entry.getKey())),
+                        Component.translatable("netplayer.toast.guest_left"));
             }
         }
     }
@@ -1893,17 +2009,41 @@ public final class NetPlayerClient {
         }
     }
 
-    private static final class JoinFlow {
+    /** One attempt to enter a friend's world: ICE, then the Minecraft connect, then playing inside. */
+    private static final class JoinSession {
+        enum Stage {
+            /** Handshake in progress (ICE, and the relay fallback if the direct path fails). */
+            ICE,
+            /** The tunnel is up and the vanilla client is connecting to it. */
+            CONNECTING,
+            /** The guest is playing inside the host's world. */
+            INSIDE
+        }
+
         final Profile host;
         final String roomId;
         final String world;
+        volatile Stage stage = Stage.ICE;
+        volatile long startedAt = System.currentTimeMillis();
+        volatile long stageSince = startedAt;
         volatile int port;
-        volatile int disconnectTicks;
+        volatile boolean disconnected;
+        /** Set once the client actually left its own world, so a slow transition cannot look like success. */
+        volatile boolean sawEmptyLevel;
+        /** Set once the vanilla client had a connection in this attempt: its disappearance is a failure. */
+        volatile boolean sawConnection;
 
-        JoinFlow(Profile host, String roomId, String world) {
+        JoinSession(Profile host, String roomId, String world) {
             this.host = host;
             this.roomId = roomId;
             this.world = world;
+        }
+
+        void stage(Stage next) {
+            if (stage != next) {
+                stage = next;
+                stageSince = System.currentTimeMillis();
+            }
         }
     }
 
