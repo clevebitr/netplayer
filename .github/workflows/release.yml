@@ -1,8 +1,11 @@
-name: beta release
+name: release
 
+# Stable releases come from a version tag (v1.0.0 -> netplayer-1.0.0.jar), every push to main
+# still produces a beta build so the latest commit is always downloadable.
 on:
   push:
     branches: [main]
+    tags: ['v*']
   workflow_dispatch:
 
 permissions:
@@ -23,7 +26,14 @@ jobs:
 
       - name: version
         id: version
-        run: echo "name=1.0-beta-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+        run: |
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            echo "name=${GITHUB_REF#refs/tags/v}" >> "$GITHUB_OUTPUT"
+            echo "prerelease=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "name=1.0-beta-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+            echo "prerelease=true" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: build
         run: |
@@ -41,12 +51,16 @@ jobs:
         with:
           tag_name: v${{ steps.version.outputs.name }}
           name: NetPlayer ${{ steps.version.outputs.name }}
-          prerelease: true
+          prerelease: ${{ steps.version.outputs.prerelease }}
           generate_release_notes: true
           body: |
-            Beta build from commit ${{ github.sha }}.
+            Minecraft 1.21.11 / NeoForge 21.11.x, client side only.
 
-            - `netplayer-*.jar` -> put into `mods/` (client only, Minecraft 1.21.11 + NeoForge 21.11.x)
-            - `netplayer-server-*.jar` -> `java -jar netplayer-server-*.jar --port 25566`
+            - `netplayer-${{ steps.version.outputs.name }}.jar` -> put into `mods/`
+            - `netplayer-server-${{ steps.version.outputs.name }}.jar` -> `java -jar netplayer-server-*.jar --port 25566`
+            - Cloudflare Workers signaling: see `signal-worker/README.md` (`npx wrangler deploy`)
+
+            Clients and the signaling server must be the same generation: 1.0 changed the presence
+            payload and the signed handshake strings, an 0.1.x client cannot talk to a 1.0 server.
           files: |
             dist/*.jar

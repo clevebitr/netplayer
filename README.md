@@ -86,7 +86,7 @@ Both the host and the guest need the mod. A dedicated server does **not**.
 ## Installation
 
 1. Install NeoForge 21.11.x for Minecraft 1.21.11.
-2. Put `netplayer-0.2.0.jar` into `mods/`.
+2. Put `netplayer-1.0.0.jar` into `mods/`.
 3. Launch the game.
 
 ## Usage
@@ -236,7 +236,7 @@ Share the credentials only with your friends: a TURN server that accepts anyone 
   identity and the first account seen behind a friend id is pinned).
 - Client and signaling server must be the same generation: the room id is no longer published in
   presence and invitation codes carry a signed `v: 2` payload. An 0.1.x client cannot talk to
-  an 0.2.x server.
+  a 1.0 server.
 - Symmetric NAT or CGNAT pairs need a TURN relay; without one the mod tells you instead of
   silently hanging. IPv6 (both peers with a global address) or an open UDP port works directly.
 - The TURN client implements the UDP transport with long term credentials only: no `turns:` (TLS)
