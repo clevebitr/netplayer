@@ -933,6 +933,7 @@ public final class NetPlayerClient {
                     processRelay(peer, earlyRelayMessage, state);
                 }
             } catch (Exception e) {
+                LOG.error("ICE could not start", e);
                 iceFailed(state);
             }
         });
@@ -1785,7 +1786,10 @@ public final class NetPlayerClient {
             String basis = Handshake.premium(name, profileId, serverId);
             proof.addProperty("sig", Bytes.b64(identity.sign(basis.getBytes(StandardCharsets.UTF_8))));
             return proof;
-        } catch (Exception e) {
+        } catch (Throwable e) {
+            // Relevant on non standard JVMs (Android launchers have shipped without java.net.http):
+            // a missing session client must degrade to "cannot prove", never crash the join.
+            LOG.warn("premium proof unavailable: {}", e.toString());
             return null;
         }
     }

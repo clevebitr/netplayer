@@ -86,7 +86,7 @@ Both the host and the guest need the mod. A dedicated server does **not**.
 ## Installation
 
 1. Install NeoForge 21.11.x for Minecraft 1.21.11.
-2. Put `netplayer-1.0.1.jar` into `mods/`.
+2. Put `netplayer-1.0.2.jar` into `mods/`.
 3. Launch the game.
 
 ## Usage
@@ -191,6 +191,16 @@ systemProp.http.proxyPort=7890
 systemProp.https.proxyHost=127.0.0.1
 systemProp.https.proxyPort=7890
 ```
+
+## Android and other non standard launchers
+
+The mod runs on Android through launchers such as Zalith/Pojav (a patched JDK 21), and 1.0.2 fixes the
+one thing that broke there: ice4j reads its own defaults (`reference.conf`) through the *thread
+context class loader*. A launcher whose context loader cannot see the mod jar made `new Agent()`
+throw `Key 'ice4j.consent-freshness.interval' not found in source 'typesafe config'`, which looked
+like a dead network (`ICE failed before the agent started`). The constructor now pins the context
+loader to its own class loader for the whole ICE setup. If you see that exception on 1.0.0/1.0.1,
+update the jar; nothing else has to change.
 
 ## When it does not connect
 

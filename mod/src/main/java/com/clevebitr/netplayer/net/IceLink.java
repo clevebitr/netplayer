@@ -50,17 +50,59 @@ public final class IceLink implements Link {
     }
 
     public IceLink(boolean controlling, List<String> stunServers) throws Exception {
-        agent = new Agent();
-        agent.setControlling(controlling);
-        agent.setTrickling(false);
-        for (String stun : stunServers) {
-            TransportAddress address = parse(stun);
-            if (address != null) {
-                agent.addCandidateHarvester(new StunCandidateHarvester(address));
+        // The context loader stays pointed at our own loader for the whole construction: harvesters
+        // and components read ice4j defaults lazily as well.
+        Thread thread = Thread.currentThread();
+        ClassLoader previous = thread.getContextClassLoader();
+        thread.setContextClassLoader(IceLink.class.getClassLoader());
+        try {
+            agent = buildAgent();
+            agent.setControlling(controlling);
+            agent.setTrickling(false);
+            for (String stun : stunServers) {
+                TransportAddress address = parse(stun);
+                if (address != null) {
+                    agent.addCandidateHarvester(new StunCandidateHarvester(address));
+                }
             }
+            stream = agent.createMediaStream("netplayer");
+            component = agent.createComponent(stream, 0, 0, 0);
+        } finally {
+            thread.setContextClassLoader(previous);
         }
-        stream = agent.createMediaStream("netplayer");
-        component = agent.createComponent(stream, 0, 0, 0);
+    }
+
+    /**
+     * ice4j reads its own defaults (reference.conf) through the thread context class loader. Launchers
+     * that do not put the mod jar behind that loader (Zalith/Android is one) make the lookup fail and
+     * {@code new Agent()} throws "Key 'ice4j.consent-freshness.interval' not found", which looks like
+     * a broken network but is really a class loader problem. Point the context loader at our own
+     * loader for the construction, and reload the (already cached) config once if an earlier attempt
+     * failed before this fix existed.
+     */
+    private static Agent buildAgent() throws Exception {
+        try {
+            return new Agent();
+        } catch (Exception | LinkageError first) {
+            // An earlier, wrongly loaded config may be cached: drop it and retry once.
+            if (!reloadJitsiConfig()) {
+                throw new IllegalStateException("ice4j configuration unavailable: " + first.getMessage(), first);
+            }
+            return new Agent();
+        }
+    }
+
+    /** Best effort: drops jitsi's cached typesafe config so the next read uses the fixed loader. */
+    private static boolean reloadJitsiConfig() {
+        try {
+            Class<?> type = Class.forName("org.jitsi.config.JitsiConfig", true, IceLink.class.getClassLoader());
+            Object companion = type.getField("Companion").get(null);
+            companion.getClass().getMethod("reloadNewConfig").invoke(companion);
+            LOG.info("ice4j config reloaded after a failed initialization");
+            return true;
+        } catch (Throwable ignored) {
+            return false;
+        }
     }
 
     private static TransportAddress parse(String text) {
