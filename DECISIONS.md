@@ -116,3 +116,15 @@ ice4j 开源版没有 TURN，所以中继只能自己写。范围刻意压到「
 验证：本地 `./gradlew build -Pmod_version=1.0.0` 通过；push tag 后两个 workflow 都绿，`gh release view v1.0.0` 显示 isPrerelease=false、Latest，两个 jar 已上传（mod 12004226 B、server 370609 B）。
 
 注意：1.0 与 0.1.x 客户端/信令不互通（presence 载荷与签名基串都变了），线上 worker 必须先 `wrangler deploy` 再发客户端。
+
+## 2026-10-31 — 1.0.2：Android 上 ice4j 配置加载失败（TCCL）
+
+Android（Zalith/Pojav）实测报"连不上"，日志决定性一行：`ICE self test failed / Key 'org.ice4j.ice.CONSENT_FRESHNESS_INTERVAL' not found in source 'typesafe config'`，栈顶是 `AgentConfig.getConsentFreshnessInterval → Agent$StunKeepAliveRunner → Agent.<init> → IceLink.<init>`。也就是说 `new Agent()` 直接抛异常，ICE 根本没开始 —— 与 IPv6、防火墙无关（他们的两台机器 IPv6 前缀同 /64 只是巧合，不是原因）。
+
+根因：ice4j 的默认值来自 `reference.conf`，Typesafe Config 通过**线程上下文类加载器**找这个资源。桌面端 TCCL 是 FML 的 module loader，能看到 mod jar；Android 启动器的 TCCL 看不到，`ConfigFactory.load()` 拿到空配置，Agent 读第一个默认值就炸。
+
+修法：`IceLink` 构造期间把 TCCL 固定成自己的 classloader（覆盖 agent + harvester + component 整段），失败时再反射调 `JitsiConfig.Companion.reloadNewConfig()` 清掉已缓存的坏配置并重试一次。复现方式：用 child-first URLClassLoader 加载 mod jar、父加载器为 platform、TCCL 设成看不见 jar 的 system loader —— 修前抛出同样的 metaconfig 异常，修后正常构造。正常 classpath 下 ICE 仍 114ms 通过（4 个候选，全局 IPv6）。
+
+顺带：ICE 启动失败现在会 LOG.error 打完整异常（以前只有"ICE failed before the agent started"这种没法诊断的日志）；正版证明路径改为 catch Throwable，Android JVM 若没有 java.net.http 也只会降级成"无法证明账号"而不是让加入流程崩。
+
+发布 v1.0.2。给用户的排查顺序也写进 README：网络自检 → 日志 ICE start/failed 与两侧候选 → Windows 防火墙入站 UDP → ping -6 → CPE IPv6 防火墙 → TURN。
