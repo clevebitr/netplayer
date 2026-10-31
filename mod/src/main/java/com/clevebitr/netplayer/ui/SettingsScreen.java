@@ -8,7 +8,7 @@ import net.minecraft.client.gui.components.Tooltip;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.network.chat.Component;
 
-/** Signaling server / STUN / proxy configuration, every field labelled. */
+/** Signaling server / STUN / TURN / proxy configuration, every field labelled. */
 public final class SettingsScreen extends Screen {
     private static final int LABEL = 0xFFFFFF55;
     private static final int HINT = 0xFF909090;
@@ -17,6 +17,7 @@ public final class SettingsScreen extends Screen {
     private final NetPlayerClient client = NetPlayerClient.get();
     private EditBox addressBox;
     private EditBox stunBox;
+    private EditBox turnBox;
     private EditBox proxyBox;
     private EditBox proxyPortBox;
     private Component status = Component.empty();
@@ -37,29 +38,40 @@ public final class SettingsScreen extends Screen {
         addressBox.setValue(address());
         addRenderableWidget(addressBox);
 
-        stunBox = new EditBox(font, left, 96, 310, 18, Component.literal("stun.miwifi.com:3478"));
+        stunBox = new EditBox(font, left, 86, 310, 18, Component.literal("stun.miwifi.com:3478"));
         stunBox.setMaxLength(512);
         stunBox.setValue(client.stunServersText());
         addRenderableWidget(stunBox);
 
-        proxyBox = new EditBox(font, left, 146, 220, 18, Component.translatable("netplayer.settings.proxy_hint"));
+        turnBox = new EditBox(font, left, 124, 220, 18, Component.translatable("netplayer.settings.turn_hint"));
+        turnBox.setMaxLength(512);
+        turnBox.setValue(client.turnServersText());
+        addRenderableWidget(turnBox);
+
+        proxyBox = new EditBox(font, left, 162, 220, 18, Component.translatable("netplayer.settings.proxy_hint"));
         proxyBox.setMaxLength(128);
         proxyBox.setValue(client.proxyHost());
         addRenderableWidget(proxyBox);
 
-        proxyPortBox = new EditBox(font, left + 226, 146, 84, 18, Component.literal("7890"));
+        proxyPortBox = new EditBox(font, left + 226, 162, 84, 18, Component.literal("7890"));
         proxyPortBox.setMaxLength(5);
         proxyPortBox.setValue(Integer.toString(client.proxyPort()));
         addRenderableWidget(proxyPortBox);
 
         addRenderableWidget(Button.builder(Component.translatable("netplayer.settings.save"), b -> save())
-                .bounds(left, 176, 150, 20).build());
+                .bounds(left, 186, 150, 20).build());
 
         addRenderableWidget(Button.builder(Component.translatable("netplayer.settings.test"), b -> {
             client.probeSignaling();
             setStatus("netplayer.settings.probing", 0xFFFFAA00);
-        }).bounds(left + 160, 176, 150, 20)
+        }).bounds(left + 160, 186, 150, 20)
                 .tooltip(Tooltip.create(Component.translatable("netplayer.settings.test_tip")))
+                .build());
+
+        addRenderableWidget(Button.builder(Component.translatable("netplayer.settings.turn_test"),
+                        b -> client.probeTurn())
+                .bounds(left + 226, 124, 84, 18)
+                .tooltip(Tooltip.create(Component.translatable("netplayer.settings.turn_test_tip")))
                 .build());
 
         addRenderableWidget(Button.builder(Component.translatable("netplayer.button.done"),
@@ -104,7 +116,8 @@ public final class SettingsScreen extends Screen {
         } catch (Exception e) {
             proxyPort = 0;
         }
-        client.applySettings(host, port, stunBox.getValue(), proxyBox.getValue(), Math.max(0, proxyPort));
+        client.applySettings(host, port, stunBox.getValue(), proxyBox.getValue(), Math.max(0, proxyPort),
+                turnBox.getValue());
         setStatus("netplayer.settings.saved", 0xFF55FF55);
     }
 
@@ -126,18 +139,25 @@ public final class SettingsScreen extends Screen {
         graphics.drawString(font, Component.literal(client.signalingAddress()), left + 96, 26, HINT, false);
 
         graphics.drawString(font, Component.translatable("netplayer.settings.address"), left, 38, LABEL, false);
-        graphics.drawString(font, Component.translatable("netplayer.settings.stun_label"), left, 86, LABEL, false);
-        graphics.drawString(font, Component.translatable("netplayer.settings.proxy_label"), left, 136, LABEL, false);
-        graphics.drawString(font, Component.translatable("netplayer.settings.proxy_port"), left + 226, 136, LABEL, false);
+        graphics.drawString(font, Component.translatable("netplayer.settings.stun_label"), left, 76, LABEL, false);
+        graphics.drawString(font, Component.translatable("netplayer.settings.turn_label"), left, 114, LABEL, false);
+        graphics.drawString(font, Component.translatable("netplayer.settings.proxy_label"), left, 152, LABEL, false);
+        graphics.drawString(font, Component.translatable("netplayer.settings.proxy_port"), left + 226, 152, LABEL, false);
 
         if (!status.getString().isEmpty()) {
-            graphics.drawString(font, status, left, 202, statusColor, false);
+            graphics.drawString(font, status, left, 208, statusColor, false);
         }
         String probe = client.probeResult();
         if (!probe.isEmpty()) {
             Component text = probe.startsWith("netplayer.") ? Component.translatable(probe) : Component.literal(probe);
-            graphics.drawString(font, text, left, 216, probe.equals("netplayer.settings.probe_ok") ? 0xFF55FF55
+            graphics.drawString(font, text, left, 220, probe.equals("netplayer.settings.probe_ok") ? 0xFF55FF55
                     : probe.equals("netplayer.settings.probing") ? 0xFFFFAA00 : 0xFFFF5555, false);
+        }
+        String turn = client.turnProbeText();
+        if (!turn.isEmpty()) {
+            Component text = turn.startsWith("netplayer.") ? Component.translatable(turn) : Component.literal(turn);
+            boolean good = client.turnProbeOk() || turn.equals("netplayer.settings.turn_probing");
+            graphics.drawString(font, text, left, 232, good ? 0xFF55FF55 : 0xFFFF5555, false);
         }
     }
 

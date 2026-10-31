@@ -27,7 +27,7 @@ import java.util.List;
  * One ICE session (host candidates plus STUN discovered ones). Candidates are exchanged once over
  * the signaling channel; the resulting socket carries the tunnel.
  */
-public final class IceLink implements AutoCloseable {
+public final class IceLink implements Link {
     public static final int MAX_DATAGRAM = 1500;
     /** A peer cannot make us chew through an unbounded candidate list. */
     private static final int MAX_CANDIDATES = 32;
@@ -245,6 +245,12 @@ public final class IceLink implements AutoCloseable {
         return local != null && local.getType() == CandidateType.RELAYED_CANDIDATE;
     }
 
+    @Override
+    public String kind() {
+        return pairInfo().kind();
+    }
+
+    @Override
     public void send(byte[] data) {
         if (closed) {
             return;
@@ -256,6 +262,7 @@ public final class IceLink implements AutoCloseable {
     }
 
     /** Blocks until one datagram arrives, or returns null once the link is closed. */
+    @Override
     public byte[] receive() {
         DatagramSocket socket = component.getSocket();
         if (socket == null) {

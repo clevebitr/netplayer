@@ -16,7 +16,7 @@ import java.net.Socket;
  * listens on loopback so the vanilla client can connect to it like any LAN world.
  */
 public final class Tunnel implements AutoCloseable {
-    private final IceLink link;
+    private final Link link;
     private final SecretKeySpec key;
     private final ReliableStream stream;
     private final boolean host;
@@ -25,7 +25,7 @@ public final class Tunnel implements AutoCloseable {
     private volatile boolean closed;
     private volatile boolean synHandled;
 
-    private Tunnel(IceLink link, SecretKeySpec key, boolean host, int lanPort, ServerSocket local) {
+    private Tunnel(Link link, SecretKeySpec key, boolean host, int lanPort, ServerSocket local) {
         this.link = link;
         this.key = key;
         this.host = host;
@@ -44,11 +44,11 @@ public final class Tunnel implements AutoCloseable {
         }
     }
 
-    public static Tunnel host(IceLink link, SecretKeySpec key, int lanPort) {
+    public static Tunnel host(Link link, SecretKeySpec key, int lanPort) {
         return new Tunnel(link, key, true, lanPort, null);
     }
 
-    public static Tunnel guest(IceLink link, SecretKeySpec key) throws IOException {
+    public static Tunnel guest(Link link, SecretKeySpec key) throws IOException {
         ServerSocket listener = new ServerSocket();
         listener.setReuseAddress(true);
         listener.bind(new InetSocketAddress(LOOPBACK, 0));
@@ -147,6 +147,11 @@ public final class Tunnel implements AutoCloseable {
                 }
             }
         });
+    }
+
+    /** Path kind of the underlying link (lan, ipv6, punch or relay). */
+    public String kind() {
+        return link.kind();
     }
 
     public int rttMillis() {

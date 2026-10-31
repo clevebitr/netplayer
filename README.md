@@ -108,6 +108,9 @@ Both the host and the guest need the mod. A dedicated server does **not**.
   "signalingHost": "127.0.0.1",
   "signalingPort": 25566,
   "stunServers": ["stun.miwifi.com:3478", "stun.chat.bilibili.com:3478"],
+  "turnServers": [],
+  "turnUser": "",
+  "turnPass": "",
   "iceDebug": false,
   "verifyPremium": true
 }
@@ -116,6 +119,10 @@ Both the host and the guest need the mod. A dedicated server does **not**.
 `signalingUrl` takes precedence when it is set, e.g.
 `"signalingUrl": "wss://netplayer-signal.example.workers.dev/"`. Leave it empty to use
 `signalingHost` / `signalingPort` (the self hosted TCP server) instead.
+
+`turnServers` enables the relay fallback (see below); `turnUser` / `turnPass` are the long term
+TURN credentials and can stay empty for an open relay. Everything except the proxy host and the TURN
+credentials is editable in game under **Friends → Settings**.
 
 `proxyHost` / `proxyPort` (default empty / 7890) route the WebSocket signaling and the Mojang
 session calls through an HTTP proxy. `*.workers.dev` is not reachable from every network
@@ -185,6 +192,42 @@ systemProp.https.proxyHost=127.0.0.1
 systemProp.https.proxyPort=7890
 ```
 
+## TURN relay (symmetric NAT / CGNAT)
+
+ICE only works when at least one side has a reachable UDP path. Two symmetric NATs (or two carrier
+grade NATs, e.g. two phone hotspots) have none, and before 0.2 the mod just failed. Now it falls back
+to a TURN relay:
+
+1. Both sides allocate a relayed address on the configured TURN server and publish it over the
+   signaling channel, signed with their identity (`relay1:<room>:<from>:<to>:<addr>`).
+2. If ICE fails, each side opens a permission and binds a channel to the peer's relayed address and
+   the tunnel continues over the relay. The relay only sees AES-GCM datagrams.
+3. If no relay answers either, the old clear failure message is shown instead of hanging.
+
+The allocation runs in parallel with ICE, so the direct path is still preferred and the relay only
+costs quota when it is actually needed.
+
+**Which server to use.** Public "free" relays exist but are shared, rate limited, and frequently
+blocked (measured from a mainland China connection: `openrelay.metered.ca` did not resolve,
+`a.relay.metered.ca` answered the TURN challenge but rejected the public `openrelayproject`
+credentials, `eu-0.turn.peerjs.com` did not resolve, `free.expressturn.com` never answered). Use the
+**Test relay** button in Settings to see what works from your network. Two options that actually
+hold up:
+
+- **Self hosted coturn** on any VPS with a UDP port:
+
+  ```bash
+  docker run -d --network host coturn/coturn \
+    -n --lt-cred-mech --user=netplayer:secret --realm=netplayer
+  # config.json: "turnServers": ["turn:your.vps:3478"], "turnUser": "netplayer", "turnPass": "secret"
+  ```
+
+- **Cloudflare Realtime TURN** (1 TB/month free, no server to babysit): create a TURN key in the
+  dashboard, mint short lived credentials from its API, and put the resulting
+  `turn:` / `turns:` URL plus username/credential into the config.
+
+Share the credentials only with your friends: a TURN server that accepts anyone will relay anyone.
+
 ## Limitations
 
 - Premium check only gates the tunnel; the host world still runs in offline mode, so in-game
@@ -194,8 +237,10 @@ systemProp.https.proxyPort=7890
 - Client and signaling server must be the same generation: the room id is no longer published in
   presence and invitation codes carry a signed `v: 2` payload. An 0.1.x client cannot talk to
   an 0.2.x server.
-- No TURN relay in 0.1: symmetric NAT or carrier grade NAT pairs will fail, the mod tells you
-  instead of silently hanging. IPv6 (both peers with a global address) or an open UDP port works.
+- Symmetric NAT or CGNAT pairs need a TURN relay; without one the mod tells you instead of
+  silently hanging. IPv6 (both peers with a global address) or an open UDP port works directly.
+- The TURN client implements the UDP transport with long term credentials only: no `turns:` (TLS)
+  and no TURN over TCP, so a network that blocks all UDP still cannot be helped.
 - One Minecraft connection per tunnel; the guest side uses a random loopback port. A host
   accepts up to 8 guests at the same time.
 - The transport has a fixed send window and no congestion control, which is fine for Minecraft

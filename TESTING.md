@@ -116,9 +116,32 @@ A 在 **对好友开放** 里点 **复制房间密钥**（`npjoin1....`）发给
 | --- | --- | --- |
 | 两台都在 IPv6 GUA 下（`240e:` / `2001:` 开头） | host candidate (IPv6) | 成功，延迟最低 |
 | 一方普通家用 NAT，另一方另一网络 | srflx + 打洞 | 多数成功 |
-| 双方都在对称 NAT / 运营商 CGNAT（手机热点常见） | 无路可走 | 日志 `ICE failed, no direct path` + toast `无法直连，请尝试 IPv6 或端口转发`（v1 没有 TURN，这是预期行为） |
+| 双方都在对称 NAT / 运营商 CGNAT（手机热点常见） | 配了 TURN 就走中继 | 日志 `ICE failed, no direct path` → `TURN relay allocated on ...` → `relay tunnel up with ...`，toast `直连失败，已通过中继连接`；好友详情里链路显示 `中继` |
+| 同上但没配 TURN | 无路可走 | `ICE failed, no direct path` + toast `无法直连，请尝试 IPv6 或端口转发` |
 
 建议组合：A 用家里 WiFi，B 用手机热点（不同 NAT）。
+
+## 3.5 TURN 中继
+
+没有 TURN 服务器也能先测协议栈：`core` 里有一套进程内 mock TURN（`TurnServerStub`），
+`./gradlew :core:test` 会跑分配/认证/通道绑定/双向收发。要测真实中继：
+
+1. 起一个 coturn（本机或 VPS，注意放行 UDP 3478）：
+
+   ```bash
+   docker run -d --network host coturn/coturn      -n --lt-cred-mech --user=netplayer:secret --realm=netplayer
+   ```
+
+2. 游戏内 **好友 → 设置** → `TURN 中继` 填 `turn:127.0.0.1:3478`，点 **测试中继** →
+   显示 `turn:127.0.0.1:3478 -> 127.0.0.1:xxxxx (12ms)` 表示可用；失败会显示原因（
+   `did not answer` / `rejected the credentials (401)`）。
+3. `config.json` 里补 `"turnUser": "netplayer", "turnPass": "secret"`。
+4. 关掉 STUN（或直接拔掉能直连的条件）逼两侧走中继，按第 3 节「对称 NAT」一行验收。
+5. 中继路径下的现象：`ICE failed` 之后不弹失败 toast，而是 `relay tunnel up`；隧道 RTT
+   会比直连高一个转发往返。
+
+排查常见原因：`turnServers` 写成了 `turns:`（未实现 TLS）、UDP 3478 没放行、凭证错
+（401）、服务器只开了 TCP 传输。
 
 ## 4. 观测手段
 
@@ -138,7 +161,8 @@ A 在 **对好友开放** 里点 **复制房间密钥**（`npjoin1....`）发给
 
 ## 6. 回归脚本（可选，无 GUI）
 
-`core` 有 9 个单测覆盖密钥/签名/AES-GCM/协议编码/规范化 JSON/身份自证，`server` 有 5 个协议回归
+`core` 有 16 个单测覆盖密钥/签名/AES-GCM/协议编码/规范化 JSON/身份自证，以及 TURN 客户端
+（内置 mock TURN 服务器：401 挑战、分配、权限、通道绑定、双向 1200B 收发），`server` 有 5 个协议回归
 测试（伪造 hello、presence 不泄漏 room id 与 allow、只有房主能应答/关房、token 绕过），
 `signal-worker` 有一套端到端 smoke：
 

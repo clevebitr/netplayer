@@ -153,5 +153,13 @@
   "netplayer.open.no_guests": "Nobody has joined yet",
   "netplayer.open.guest_row": "%s  ·  %s",
   "netplayer.open.kick": "Kick",
-  "netplayer.open.kick_tip": "Closes this tunnel, the guest drops back to the title screen"
+  "netplayer.open.kick_tip": "Closes this tunnel, the guest drops back to the title screen",
+  "netplayer.toast.relay": "No direct path, connected through a relay",
+  "netplayer.settings.turn_label": "TURN relays (for symmetric NAT / CGNAT, comma separated)",
+  "netplayer.settings.turn_hint": "turn:host:3478, turn:other:3478 (empty = no relay)",
+  "netplayer.settings.turn_test": "Test relay",
+  "netplayer.settings.turn_test_tip": "Tries each configured relay to see which one works",
+  "netplayer.settings.turn_probing": "Testing relays...",
+  "netplayer.settings.turn_none": "No relay configured",
+  "netplayer.settings.turn_failed": "No relay answered"
 }

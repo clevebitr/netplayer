@@ -10,8 +10,12 @@ import com.clevebitr.netplayer.core.Msg;
 import com.clevebitr.netplayer.core.PremiumAuth;
 import com.clevebitr.netplayer.core.Profile;
 import com.clevebitr.netplayer.core.SignalClient;
+import com.clevebitr.netplayer.core.TurnClient;
+import com.clevebitr.netplayer.net.Addresses;
 import com.clevebitr.netplayer.net.IceLink;
+import com.clevebitr.netplayer.net.Link;
 import com.clevebitr.netplayer.net.Tunnel;
+import com.clevebitr.netplayer.net.TurnRelay;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
@@ -27,6 +31,7 @@ import net.minecraft.network.chat.Component;
 import net.minecraft.world.level.GameType;
 
 import javax.crypto.spec.SecretKeySpec;
+import java.net.InetSocketAddress;
 import java.net.ServerSocket;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -82,6 +87,7 @@ public final class NetPlayerClient {
     private final Map<String, Tunnel> tunnels = new ConcurrentHashMap<>();
     private final Map<String, IceState> icePeers = new ConcurrentHashMap<>();
     private final Map<String, Msg> earlyIce = new ConcurrentHashMap<>();
+    private final Map<String, Msg> earlyRelay = new ConcurrentHashMap<>();
 
     private volatile String joinedHostId = "";
     private volatile String joinedRoomId = "";
@@ -90,6 +96,8 @@ public final class NetPlayerClient {
     private volatile long configStamp;
     private volatile String lastConnectError = "";
     private volatile String probeResult = "";
+    private volatile String turnProbeText = "";
+    private volatile boolean turnProbeOk;
     private volatile boolean restoreAuth = true;
     private volatile IceState directPending;
     private volatile String lastDirectOffer = "";
@@ -609,6 +617,7 @@ public final class NetPlayerClient {
             }
             case "join_ans" -> onJoinAnswer(msg);
             case "ice" -> onIce(msg);
+            case "relay" -> onRelay(msg);
             case "kick" -> onKick(msg);
             case "room_closed" -> {
                 JoinFlow flow = joinFlow;
@@ -912,6 +921,15 @@ public final class NetPlayerClient {
                 if (early != null) {
                     processIce(peer, early, state);
                 }
+                // The allocation runs next to ICE: when the direct path fails we already have a
+                // relayed address to fall back on, and it is published as a signed "relay" message.
+                if (relayConfigured()) {
+                    allocateRelay(state);
+                }
+                Msg earlyRelayMessage = earlyRelay.remove(peer.id);
+                if (earlyRelayMessage != null) {
+                    processRelay(peer, earlyRelayMessage, state);
+                }
             } catch (Exception e) {
                 iceFailed(state);
             }
@@ -953,6 +971,7 @@ public final class NetPlayerClient {
             LOG.warn("ice signature rejected for {}", expected.shortName());
             return;
         }
+        state.peerEpk = Json.str(remote, "epk");
         Thread.ofVirtual().name("netplayer-ice-finish").start(() -> {
             try {
                 state.link.acceptRemote(remote);
@@ -983,13 +1002,158 @@ public final class NetPlayerClient {
 
     private void iceFailed(IceState state) {
         LOG.warn("ICE failed, no direct path");
-        Toasts.info(Component.translatable("netplayer.title"), Component.translatable("netplayer.error.ice_failed"));
-        if (state != null) {
-            state.close();
-            icePeers.values().remove(state);
+        if (state == null) {
+            notify("netplayer.error.ice_failed");
+            return;
         }
+        state.iceFailed = true;
+        if (maybeStartRelay(state)) {
+            // Either the relay is starting or its pieces are still on the way.
+            return;
+        }
+        notify("netplayer.error.ice_failed");
+        state.close();
+        icePeers.values().remove(state);
         if (joinFlow != null) {
             joinFlow = null;
+        }
+    }
+
+    // ------------------------------------------------------------------ TURN relay fallback
+
+    private boolean relayConfigured() {
+        return config.turnServers != null && !config.turnServers.isEmpty();
+    }
+
+    /** Allocates a relay on the first TURN server that answers, then publishes the address. */
+    private void allocateRelay(IceState state) {
+        Thread.ofVirtual().name("netplayer-turn").start(() -> {
+            for (String spec : config.turnServers) {
+                InetSocketAddress server = TurnClient.parseServer(spec);
+                if (server == null) {
+                    LOG.warn("ignoring bad turn server '{}'", spec);
+                    continue;
+                }
+                TurnClient turn = null;
+                try {
+                    turn = new TurnClient(server, config.turnUser, config.turnPass);
+                    TurnClient.Allocation allocation = turn.allocate(600L);
+                    if (state.relayStarted) {
+                        turn.close();
+                        return;
+                    }
+                    state.turn = turn;
+                    state.myRelay = allocation.relayed();
+                    String relayed = Addresses.format(state.myRelay);
+                    JsonObject payload = Json.obj();
+                    payload.addProperty("room", state.roomId);
+                    payload.addProperty("relay", relayed);
+                    String basis = Handshake.relay(state.roomId, me().id, state.peer.id, relayed);
+                    payload.addProperty("sig",
+                            Bytes.b64(identity.sign(basis.getBytes(StandardCharsets.UTF_8))));
+                    Msg msg = Msg.of("relay", payload);
+                    msg.put("to", state.peer.id);
+                    send(msg);
+                    LOG.info("TURN relay allocated on {}: {}", server, relayed);
+                    maybeStartRelay(state);
+                    return;
+                } catch (Exception e) {
+                    LOG.warn("TURN allocation on {} failed: {}", server, e.getMessage());
+                    if (turn != null) {
+                        turn.close();
+                    }
+                }
+            }
+            // No relay available: if the direct path already failed, this is the end of the line.
+            maybeStartRelay(state);
+        });
+    }
+
+    private void onRelay(Msg msg) {
+        Profile from = Profile.fromJson(msg.obj("from"));
+        if (!from.selfCertified()) {
+            LOG.warn("relay message from an identity that does not match its key, dropped");
+            return;
+        }
+        IceState state = icePeers.get(from.id);
+        if (state == null) {
+            if (earlyRelay.size() < 8) {
+                earlyRelay.put(from.id, msg);
+            }
+            return;
+        }
+        processRelay(from, msg, state);
+    }
+
+    private void processRelay(Profile from, Msg msg, IceState state) {
+        Profile expected = state.peer;
+        if (expected == null || !expected.id.equals(from.id)) {
+            return;
+        }
+        if (!Json.str(msg.data, "room").equals(state.roomId)) {
+            LOG.warn("relay address for another room ignored");
+            return;
+        }
+        String relayed = Json.str(msg.data, "relay");
+        String basis = Handshake.relay(state.roomId, expected.id, me().id, relayed);
+        if (!Crypto.verify(expected, basis, msg.str("sig"))) {
+            LOG.warn("relay address signature rejected for {}", expected.shortName());
+            return;
+        }
+        InetSocketAddress peer = Addresses.parse(relayed);
+        if (peer == null) {
+            LOG.warn("relay address '{}' is not an IP literal, ignored", relayed);
+            return;
+        }
+        state.peerRelay = peer;
+        LOG.info("peer {} offers relay {}", expected.shortName(), relayed);
+        maybeStartRelay(state);
+    }
+
+    /**
+     * Brings up the relayed tunnel once both sides have an allocation and the direct path is known
+     * to be dead. Returns true when the relay is running or still assembling.
+     */
+    private boolean maybeStartRelay(IceState state) {
+        if (state.relayStarted) {
+            return true;
+        }
+        if (!state.iceFailed || state.turn == null || state.peerRelay == null) {
+            if (state.iceFailed && !relayConfigured()) {
+                return false;
+            }
+            return relayConfigured();
+        }
+        state.relayStarted = true;
+        Thread.ofVirtual().name("netplayer-relay").start(() -> startRelayTunnel(state));
+        return true;
+    }
+
+    private void startRelayTunnel(IceState state) {
+        try {
+            if (state.peerEpk == null || state.peerEpk.isEmpty()) {
+                LOG.warn("no peer key, cannot build the relay tunnel");
+                notify("netplayer.error.ice_failed");
+                return;
+            }
+            Link link = TurnRelay.start(state.turn, state.peerRelay);
+            SecretKeySpec key = Crypto.agree(state.ephemeral.getPrivate(), Crypto.xPublic(state.peerEpk));
+            Tunnel tunnel = state.controlling
+                    ? Tunnel.guest(link, key)
+                    : Tunnel.host(link, key, state.lanPort);
+            tunnel.start();
+            tunnels.put(state.peer.id, tunnel);
+            if (state.controlling) {
+                JoinFlow flow = joinFlow;
+                if (flow != null) {
+                    flow.port = tunnel.localPort();
+                }
+            }
+            LOG.info("relay tunnel up with {}", state.peer.shortName());
+            Toasts.info(Component.translatable("netplayer.title"), Component.translatable("netplayer.toast.relay"));
+        } catch (Exception e) {
+            LOG.warn("relay tunnel failed: {}", e.getMessage());
+            notify("netplayer.error.ice_failed");
         }
     }
 
@@ -1253,7 +1417,7 @@ public final class NetPlayerClient {
             return LinkInfo.NONE;
         }
         IceLink.PairInfo pair = state.link.pairInfo();
-        return new LinkInfo(true, pair.kind(), tunnel.rttMillis(), pair.local(), pair.remote());
+        return new LinkInfo(true, tunnel.kind(), tunnel.rttMillis(), pair.local(), pair.remote());
     }
 
     // ------------------------------------------------------------------ guests (host side)
@@ -1389,6 +1553,53 @@ public final class NetPlayerClient {
         return String.join(", ", config.stunServers);
     }
 
+    public String turnServersText() {
+        init();
+        return String.join(", ", config.turnServers);
+    }
+
+    /** Last result of the TURN probe, rendered next to the settings field. */
+    public String turnProbeText() {
+        return turnProbeText;
+    }
+
+    public boolean turnProbeOk() {
+        return turnProbeOk;
+    }
+
+    /** Tries every configured TURN server once, so a user can tell which one works from here. */
+    public void probeTurn() {
+        init();
+        turnProbeText = "netplayer.settings.turn_probing";
+        turnProbeOk = false;
+        Thread.ofVirtual().name("netplayer-turn-probe").start(() -> {
+            if (!relayConfigured()) {
+                turnProbeText = "netplayer.settings.turn_none";
+                return;
+            }
+            String lastError = "";
+            for (String spec : config.turnServers) {
+                InetSocketAddress server = TurnClient.parseServer(spec);
+                if (server == null) {
+                    lastError = "cannot parse " + spec;
+                    continue;
+                }
+                long started = System.currentTimeMillis();
+                try (TurnClient turn = new TurnClient(server, config.turnUser, config.turnPass)) {
+                    TurnClient.Allocation allocation = turn.allocate(60L);
+                    turnProbeOk = true;
+                    turnProbeText = spec + " -> " + Addresses.format(allocation.relayed())
+                            + " (" + (System.currentTimeMillis() - started) + "ms)";
+                    return;
+                } catch (Exception e) {
+                    lastError = spec + ": " + e.getMessage();
+                    LOG.warn("TURN probe failed: {}", lastError);
+                }
+            }
+            turnProbeText = lastError.isEmpty() ? "netplayer.settings.turn_failed" : lastError;
+        });
+    }
+
     /** Human readable endpoint currently in use (url or host:port). */
     public String signalingAddress() {
         init();
@@ -1407,10 +1618,14 @@ public final class NetPlayerClient {
     }
 
     public void applySettings(String host, int port, String stunCsv) {
-        applySettings(host, port, stunCsv, config.proxyHost, config.proxyPort);
+        applySettings(host, port, stunCsv, config.proxyHost, config.proxyPort, turnServersText());
     }
 
     public void applySettings(String host, int port, String stunCsv, String proxy, int proxyPort) {
+        applySettings(host, port, stunCsv, proxy, proxyPort, turnServersText());
+    }
+
+    public void applySettings(String host, int port, String stunCsv, String proxy, int proxyPort, String turnCsv) {
         init();
         String raw = host == null ? "" : host.strip();
         if (raw.contains("://")) {
@@ -1429,6 +1644,19 @@ public final class NetPlayerClient {
         if (!servers.isEmpty()) {
             config.stunServers = servers;
         }
+        List<String> relays = new ArrayList<>();
+        String turnText = turnCsv == null ? "" : turnCsv;
+        for (String part : turnText.split("[,;\\s]+")) {
+            if (!part.isBlank()) {
+                String spec = part.strip();
+                if (TurnClient.parseServer(spec) == null) {
+                    LOG.warn("ignoring bad turn server '{}'", spec);
+                    continue;
+                }
+                relays.add(spec);
+            }
+        }
+        config.turnServers = relays;
         config.proxyHost = proxy == null ? "" : proxy.strip();
         config.proxyPort = proxyPort;
         PremiumAuth.setProxy(config.proxyHost, config.proxyPort);
@@ -1557,6 +1785,14 @@ public final class NetPlayerClient {
         /** The peer's identity as we knew it when the handshake started: the only key we accept. */
         final Profile peer;
         final String roomId;
+        /** Peer ephemeral public key from its (verified) ICE description; needed for the relay too. */
+        volatile String peerEpk = "";
+        /** Our own TURN allocation, null until it is ready (or when TURN is off). */
+        volatile TurnClient turn;
+        volatile InetSocketAddress myRelay;
+        volatile InetSocketAddress peerRelay;
+        volatile boolean iceFailed;
+        volatile boolean relayStarted;
 
         IceState(IceLink link, KeyPair ephemeral, boolean controlling, int lanPort, Profile peer, String roomId) {
             this.link = link;
@@ -1569,6 +1805,10 @@ public final class NetPlayerClient {
 
         void close() {
             link.close();
+            TurnClient client = turn;
+            if (client != null) {
+                client.close();
+            }
         }
     }
 

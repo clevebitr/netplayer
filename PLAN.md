@@ -15,5 +15,5 @@ auto-breakpoint: false
 
 ## Current: M3 — M3 — 身份闭环安全修复（详见 #7）
 
-goal: M3 收尾：双开回归（好友确认/入世界/拒绝路径）
-breakpoint: 重启信令+双开跑 TESTING.md 第 1 节
+goal: M4 TURN 中继已实现，待真实服务器验收
+breakpoint: 双开验中继：coturn + 设置页测试按钮

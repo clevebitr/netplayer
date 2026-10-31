@@ -93,3 +93,18 @@ DO 实现要点：单实例 idFromName("global") 模拟 Java 的 synchronized �
 
 回归：:core:test 9、:server:test 5、worker smoke 全绿（新增 kick 中继断言），./gradlew build 通过。
 待办：TURN 中继（ice4j 对 RFC8656 支持很弱，需要自写 allocate/channel-data 客户端，或改用自建 coturn + 自定义 harvester），这一条要单独立里程碑。
+
+## 2026-10-31 — M4 TURN 中继：自写 RFC5766 客户端 + 回退路径
+
+ice4j 开源版没有 TURN，所以中继只能自己写。范围刻意压到「一条字节流」：core/TurnClient（RFC5766 UDP + 长期凭证）+ mod/net/TurnRelay（实现新抽出的 Link 接口，Tunnel 不再只认 IceLink）。
+
+实现要点
+- StunCodec：20 字节头 + TLV 属性，XOR-ADDRESS、ERROR-CODE、LIFETIME、REQUESTED-TRANSPORT、CHANNEL-NUMBER；MESSAGE-INTEGRITY = HMAC-SHA1，密钥 md5(user:realm:pass)，长度字段先把 24 字节算进去（RFC5389 §15.4）。客户端对**成功响应**也校验 MI，防止离线伪造 relayed 地址；错误响应不校验，因为服务器拒绝我们的凭证时用的是它那边的密钥。
+- TurnClient：单独 reader 虚拟线程按 transaction id 匹配响应；ChannelData 与 Data indication 都往 inbox 塞；分配成功后按 granted lifetime 的一半自动 Refresh。
+- 时序：allocate 与 ICE 并行跑（不牺牲直连），拿到 relayed 地址后发一条独立的签名消息 `relay1:room:from:to:addr`（`Handshake.relay`）。不能塞进 ICE 描述，因为分配通常晚于 ICE 描述；也不能不签，地址是攻击者可以拿来引流的东西。接收侧要求 from 自证身份 == state.peer.id、room 匹配、签名有效、地址必须是 IP 字面量（`Addresses.parse`，拒绝主机名 → 不给对端做 DNS/内网探测的机会）。
+- 回退：iceFailed 时若两侧都拿到 relayed 地址且本地有分配 → TurnRelay.start（CreatePermission + ChannelBind 0x4001）+ 复用同一个临时 X25519 密钥（peerEpk 从已验签的 ICE 描述里记下来）→ 同一个 Tunnel/ReliableStream/AES-GCM。任一环节缺失就不硬撑，仍给原来的失败提示。
+- 服务端只多认一个消息类型 `relay`（Java/TS 各一行，和 ice/kick 同一条中继路径）。
+
+公共 TURN 调研（本机实测，CN 网络）：openrelay.metered.ca 解析失败；a.relay.metered.ca 能应答 401 挑战但用公开的 openrelayproject 凭证被 400 拒（那是 Metered 账户专用主机）；eu-0.turn.peerjs.com 解析失败；free.expressturn.com 无应答。结论：公共共享中继不适合当默认值——不稳定、常被墙、凭证公开等于谁都能蹭。所以 turnServers 默认空，设置页给「测试中继」按钮让人按自己网络实测，README 推荐自建 coturn 或 Cloudflare Realtime TURN（1TB/月免费，需 API 换临时凭证）。
+
+回归：:core:test 16 项（含 mock TURN 的双向 1200B 收发、401 挑战、错误凭证）、:server:test 5 项、worker typecheck + smoke（新增 relay 中继断言）、./gradlew build 通过。未做：TURN over TCP / turns:（TLS），全 UDP 被封的网络仍然无解。

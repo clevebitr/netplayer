@@ -21,6 +21,14 @@ public final class Handshake {
                 + Json.str(description, "epk");
     }
 
+    /**
+     * The relayed address a peer got from its TURN server. Signed separately from the ICE
+     * description because the allocation usually finishes after the ICE description was sent.
+     */
+    public static String relay(String roomId, String fromId, String toId, String relayed) {
+        return "relay1:" + nz(roomId) + ":" + nz(fromId) + ":" + nz(toId) + ":" + nz(relayed);
+    }
+
     /** Mojang join proof, signed by the guest identity that owns the tunnel. */
     public static String premium(String name, String uuid, String serverId) {
         return "premium1:" + nz(name) + ":" + nz(uuid) + ":" + nz(serverId);

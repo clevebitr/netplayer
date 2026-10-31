@@ -14,6 +14,14 @@ public final class Config {
     public int signalingPort = 25566;
     public List<String> stunServers = new ArrayList<>(
             List.of("stun.miwifi.com:3478", "stun.chat.bilibili.com:3478"));
+    /**
+     * TURN relays for networks where a direct path is impossible (symmetric NAT, CGNAT). Empty
+     * disables the fallback. Examples: {@code turn:turn.example.org:3478}.
+     */
+    public List<String> turnServers = new ArrayList<>();
+    /** Long term TURN credentials; leave both empty for an open relay. */
+    public String turnUser = "";
+    public String turnPass = "";
     /** Optional http proxy for the signaling / mojang calls, empty disables it. */
     public String proxyHost = "";
     public int proxyPort = 7890;
@@ -35,6 +43,15 @@ public final class Config {
                     }
                     if (config.proxyHost == null) {
                         config.proxyHost = "";
+                    }
+                    if (config.turnServers == null) {
+                        config.turnServers = new ArrayList<>();
+                    }
+                    if (config.turnUser == null) {
+                        config.turnUser = "";
+                    }
+                    if (config.turnPass == null) {
+                        config.turnPass = "";
                     }
                     return config;
                 }

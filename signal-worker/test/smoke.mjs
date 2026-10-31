@@ -244,6 +244,11 @@ async function main() {
   check("ice is relayed with the sender profile", ice.d.from.id === bob.profile.id && ice.d.ufrag === "uf");
   check("ice no longer carries the 'to' field", !("to" in ice.d));
 
+  // Relayed addresses travel the same path, signed by the sender's identity.
+  a2.send("relay", { to: bob.profile.id, room: "room-1", relay: "198.51.100.9:50000" });
+  const relay = await b.next("relay");
+  check("relay addresses are forwarded", relay.d.from.id === alice.profile.id && relay.d.relay === "198.51.100.9:50000");
+
   // The host drops a guest: same relay path as ice, but the client acts on it.
   a2.send("kick", { to: bob.profile.id, room: "room-1" });
   const kick = await b.next("kick");

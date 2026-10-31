@@ -160,6 +160,7 @@ export class SignalRoom implements DurableObject {
         await this.joinAnswer(ws, m);
         break;
       case "ice":
+      case "relay":
       case "kick":
         await this.relayIce(ws, m);
         break;

@@ -153,5 +153,13 @@
   "netplayer.open.no_guests": "还没有好友连进来",
   "netplayer.open.guest_row": "%s  ·  %s",
   "netplayer.open.kick": "断开",
-  "netplayer.open.kick_tip": "断开这条隧道，对方会回到主菜单"
+  "netplayer.open.kick_tip": "断开这条隧道，对方会回到主菜单",
+  "netplayer.toast.relay": "直连失败，已通过中继连接",
+  "netplayer.settings.turn_label": "TURN 中继（对称 NAT / CGNAT 时使用，逗号分隔）",
+  "netplayer.settings.turn_hint": "turn:host:3478, turn:other:3478（留空 = 不用中继）",
+  "netplayer.settings.turn_test": "测试中继",
+  "netplayer.settings.turn_test_tip": "逐个尝试配置的中继服务器，看哪个能用",
+  "netplayer.settings.turn_probing": "正在测试中继…",
+  "netplayer.settings.turn_none": "没有配置中继服务器",
+  "netplayer.settings.turn_failed": "所有中继都连不上"
 }

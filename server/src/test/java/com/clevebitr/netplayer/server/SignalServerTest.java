@@ -69,11 +69,8 @@ class SignalServerTest {
             g.hello(guest);
             g.await("hello_ok");
 
-            h.send(Msg.of("room_open").put("room", room("room-1", "tok-1", List.of(guest.profile.id))));
-            g.send(Msg.of("watch").put("ids", List.of(host.profile.id)));
-
-            Msg presence = g.await("presence");
-            JsonObject room = Json.sub(presence.data, "room");
+            JsonObject room = openRoomAndWait(h, g, host.profile,
+                    room("room-1", "tok-1", List.of(guest.profile.id)));
             assertEquals("World", Json.str(room, "world"));
             assertTrue(Json.bool(room, "open"), "the friend on the allow list sees it as open");
             assertFalse(room.has("id"), "the room id must stay on the server");
@@ -97,7 +94,7 @@ class SignalServerTest {
             m.hello(mallory);
             m.await("hello_ok");
 
-            h.send(Msg.of("room_open").put("room", room("room-1", "tok-1", List.of("*"))));
+            openRoomAndWait(h, g, host.profile, room("room-1", "tok-1", List.of("*")));
             // The guest joins by naming the host: the room id never left the server.
             g.send(Msg.of("join_req").put("host", host.profile.id));
             Msg request = h.await("join_req");
@@ -126,7 +123,7 @@ class SignalServerTest {
             m.hello(mallory);
             m.await("hello_ok");
 
-            h.send(Msg.of("room_open").put("room", room("room-1", "tok-1", List.of("*"))));
+            openRoomAndWait(h, m, host.profile, room("room-1", "tok-1", List.of("*")));
             m.send(Msg.of("room_close").put("room", "room-1"));
 
             m.send(Msg.of("join_req").put("host", host.profile.id));
@@ -145,7 +142,7 @@ class SignalServerTest {
             s.hello(stranger);
             s.await("hello_ok");
 
-            h.send(Msg.of("room_open").put("room", room("room-1", "tok-1", List.of())));
+            openRoomAndWait(h, s, host.profile, room("room-1", "tok-1", List.of()));
             s.send(Msg.of("join_req").put("room", "room-1").put("token", "wrong"));
             assertEquals("not_allowed", s.await("join_ans").str("reason"));
 
@@ -153,6 +150,28 @@ class SignalServerTest {
             Msg request = h.await("join_req");
             assertEquals("tok-1", request.str("token"));
         }
+    }
+
+    /**
+     * Publishes a room and returns the presence view of it, which is also the only way to know the
+     * server processed the room (two sessions on two sockets have no ordering guarantee).
+     */
+    private static JsonObject openRoomAndWait(Peer host, Peer watcher, Profile hostProfile, JsonObject room)
+            throws Exception {
+        host.send(Msg.of("room_open").put("room", room));
+        for (int attempt = 0; attempt < 25; attempt++) {
+            watcher.send(Msg.of("watch").put("ids", List.of(hostProfile.id)));
+            Msg presence = watcher.poll("presence", 300);
+            while (presence != null) {
+                JsonObject view = Json.sub(presence.data, "room");
+                if (view.size() > 0) {
+                    return view;
+                }
+                presence = watcher.poll("presence", 100);
+            }
+            Thread.sleep(20L);
+        }
+        throw new AssertionError("the room never became visible");
     }
 
     private static JsonObject room(String id, String token, List<String> allow) {
